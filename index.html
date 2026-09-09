@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="PYTHIA — the Oracle of Delphi, reincarnated as a website. Speak to her. She answers.">
+<title>PYTHIA — The Oracle of Delphi</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' x='50' text-anchor='middle' font-size='80' fill='%23d4af37' font-family='Georgia'%3E%CE%A9%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #05070d;
+    --panel: rgba(9, 13, 24, 0.88);
+    --gold: #d4af37;
+    --gold-bright: #f3d26b;
+    --text: #cdd6e4;
+    --dim: #5c6a82;
+    --ok: #7ee787;
+    --err: #ff7b72;
+    --serif: Georgia, 'Times New Roman', serif;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(1200px 800px at 50% 20%, #0a1020 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: var(--mono);
+    overflow: hidden;
+  }
+  canvas#stars { position: fixed; inset: 0; z-index: 0; }
+  #omega-ghost {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--serif); font-size: 66vh; color: var(--gold);
+    opacity: 0.035; user-select: none;
+  }
+  #terminal {
+    position: relative; z-index: 2;
+    width: min(880px, 94vw);
+    height: min(72vh, 680px);
+    margin: 6vh auto 0;
+    background: var(--panel);
+    border: 1px solid rgba(212, 175, 55, 0.28);
+    border-radius: 12px;
+    box-shadow: 0 0 60px rgba(212, 175, 55, 0.07), 0 24px 80px rgba(0, 0, 0, 0.6);
+    display: flex; flex-direction: column;
+    backdrop-filter: blur(6px);
+  }
+  #bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.18);
+    font-size: 11px; letter-spacing: 2px; color: var(--dim);
+    user-select: none;
+  }
+  #bar b { color: var(--gold); font-weight: 600; }
+  #log {
+    flex: 1; overflow-y: auto; padding: 16px 18px 8px;
+    font-size: 13.5px; line-height: 1.65;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(212, 175, 55, 0.25) transparent;
+    -webkit-overflow-scrolling: touch;
+  }
+  #log::-webkit-scrollbar { width: 6px; }
+  #log::-webkit-scrollbar-thumb { background: rgba(212, 175, 55, 0.25); border-radius: 3px; }
+  #log .banner {
+    white-space: pre; color: var(--gold); font-size: 11px; line-height: 1.2;
+    margin-bottom: 12px; user-select: none;
+  }
+  .dim { color: var(--dim); }
+  .ok { color: var(--ok); }
+  .err { color: var(--err); }
+  .oracle { color: var(--gold-bright); font-family: var(--serif); font-style: italic; font-size: 15px; }
+  .echo { color: var(--gold); }
+  .cmd { color: var(--gold-bright); font-weight: 600; }
+  .typing::after {
+    content: '…'; display: inline-block;
+    animation: dots 1.2s steps(4, end) infinite;
+  }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+  #input-line {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 18px 14px;
+    border-top: 1px solid rgba(212, 175, 55, 0.12);
+  }
+  #prompt { color: var(--gold); white-space: nowrap; }
+  #cmd {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: var(--gold-bright); font-family: var(--mono); font-size: 16px;
+    caret-color: var(--gold);
+  }
+  #cmd::placeholder { color: #3a445c; }
+  #credit {
+    position: relative; z-index: 2;
+    text-align: center; margin: 14px auto 0;
+    font-size: 11px; letter-spacing: 1.5px; color: var(--dim);
+    user-select: none;
+  }
+  #credit a { color: var(--gold); text-decoration: none; }
+  #credit a:hover { color: var(--gold-bright); }
+  #verdict {
+    position: fixed; inset: 0; z-index: 5;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 6vw; gap: 22px;
+    background: radial-gradient(700px 500px at 50% 50%, rgba(212, 175, 55, 0.12), rgba(5, 7, 13, 0.92) 70%);
+    font-family: var(--serif);
+    cursor: pointer;
+  }
+  #verdict.show { display: flex; animation: fadeIn 1.2s ease; }
+  #verdict .kicker { letter-spacing: 6px; font-size: 13px; color: var(--dim); font-family: var(--mono); }
+  #verdict .big { font-size: clamp(26px, 5vw, 52px); color: var(--gold-bright); font-style: italic; line-height: 1.35; max-width: 900px; }
+  #verdict .sub { font-size: 14px; color: var(--dim); font-family: var(--mono); letter-spacing: 2px; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div id="omega-ghost">Ω</div>
+<div id="terminal">
+  <div id="bar"><b>PYTHIA</b> THE ORACLE OF DELPHI — TEMPLE TERMINAL <span>v2.0.0</span></div>
+  <div id="log"></div>
+  <div id="input-line">
+    <span id="prompt">pythia&gt;</span>
+    <input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="speak to the oracle…" autofocus>
+  </div>
+</div>
+<div id="credit">PYTHIA — an oracle by <a href="https://sotiriosgoulas.com" target="_blank" rel="noopener">Sotirios Goulas</a> · γνῶθι σεαυτόν · know thyself</div>
+<div id="verdict">
+  <div class="kicker">THE ORACLE HAS SPOKEN</div>
+  <div class="big" id="verdict-text"></div>
+  <div class="sub">γνῶθι σεαυτόν — know thyself</div>
+</div>
+<script>
+'use strict';
+
+/* ---------- tiny helpers ---------- */
+const $ = (id) => document.getElementById(id);
+const $log = $('log');
+const $cmd = $('cmd');
+const $prompt = $('prompt');
+const $verdict = $('verdict');
+const canvas = $('stars');
+const ctx = canvas.getContext('2d');
+
+const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+/* Log entries: { k: 'html'|'text', c: class, s: content } — 'text' entries
+   (user input, oracle replies) are rendered via textContent, never innerHTML. */
+const entries = [];
+
+function addEntry(kind, cls, content) {
+  entries.push({ k: kind, c: cls || '', s: content });
+  if (entries.length > 120) entries.splice(0, entries.length - 120);
+  persist();
+}
+
+function renderEntry(entry) {
+  const d = document.createElement('div');
+  if (entry.c) d.className = entry.c;
+  if (entry.k === 'text') d.textContent = entry.s;
+  else d.innerHTML = entry.s;
+  $log.appendChild(d);
+}
+
+function print(html, cls) { addEntry('html', cls, html); renderEntry({ k: 'html', c: cls, s: html }); scroll(); }
+function printText(text, cls) { addEntry('text', cls, text); renderEntry({ k: 'text', c: cls, s: text }); scroll(); }
+
+function scroll() { $log.scrollTop = $log.scrollHeight; }
+
+function typeLine(text, cls, speed, done) {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  $log.appendChild(d);
+  let i = 0;
+  const step = () => {
+    d.textContent = text.slice(0, i++);
+    scroll();
+    if (i <= text.length) setTimeout(step, speed || 9);
+    else if (done) done();
+  };
+  step();
+}
+
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-GB';
+    u.rate = 0.88;
+    u.pitch = 0.62;
+    const v = speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith('en'));
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch (e) { /* the oracle may be silent */ }
+}
+
+/* ---------- memory (the marble remembers) ---------- */
+const MEMORY_KEY = 'pythia-v2-log';
+
+function persist() {
+  try { localStorage.setItem(MEMORY_KEY, JSON.stringify(entries)); } catch (e) { /* private mode */ }
+}
+
+function restoreMemory() {
+  try {
+    const raw = localStorage.getItem(MEMORY_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (!Array.isArray(saved)) return false;
+    // "real" memory = actual conversation (echo/oracle lines), not boot chrome
+    const hasConversation = saved.some((e) => e && (e.c === 'echo' || e.c === 'oracle'));
+    if (!hasConversation) return false;
+    $log.innerHTML = '';
+    for (const e of saved) {
+      if (e && typeof e.s === 'string' && (e.k === 'html' || e.k === 'text')) renderEntry({ k: e.k, c: e.c || '', s: e.s });
+    }
+    entries.length = 0;
+    entries.push(...saved);
+    scroll();
+    return true;
+  } catch (e) { return false; }
+}
+
+/* ---------- the star chart ---------- */
+let W = 0, H = 0, stars = [], shooters = [], raf = 0;
+
+function makeStars() {
+  stars = [];
+  const n = Math.min(240, Math.floor((W * H) / 9000));
+  for (let i = 0; i < n; i++) {
+    stars.push({ x: rnd(0, W), y: rnd(0, H), r: rnd(0.4, 1.7), a: rnd(0.2, 0.95), tw: rnd(0.001, 0.008), ph: rnd(0, 6.28) });
+  }
+}
+
+function onResize() {
+  W = canvas.width = innerWidth;
+  H = canvas.height = innerHeight;
+  makeStars();
+}
+
+function loop(now) {
+  ctx.clearRect(0, 0, W, H);
+  for (const s of stars) {
+    ctx.fillStyle = 'rgba(205,214,230,' + (s.a * (0.55 + 0.45 * Math.sin(now * s.tw + s.ph))).toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, 6.283);
+    ctx.fill();
+  }
+  if (Math.random() < 0.004 && shooters.length < 2) {
+    shooters.push({ x: rnd(0, W), y: rnd(0, H * 0.4), vx: rnd(-7, -3), vy: rnd(2, 4), life: 55 });
+  }
+  shooters = shooters.filter((sh) => sh.life-- > 0);
+  for (const sh of shooters) {
+    sh.x += sh.vx;
+    sh.y += sh.vy;
+    ctx.strokeStyle = 'rgba(243,210,107,0.75)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(sh.x, sh.y);
+    ctx.lineTo(sh.x - sh.vx * 7, sh.y - sh.vy * 7);
+    ctx.stroke();
+  }
+  raf = requestAnimationFrame(loop);
+}
+
+/* ---------- the Ω (the stars obey the Omega) ---------- */
+let omega = null, omegaRaf = 0;
+
+function startOmega() {
+  cancelAnimationFrame(raf);
+  const S = 420, step = 5;
+  const off = document.createElement('canvas');
+  off.width = off.height = S;
+  const o = off.getContext('2d');
+  o.font = '300px Georgia, serif';
+  o.textAlign = 'center';
+  o.textBaseline = 'middle';
+  o.fillText('Ω', S / 2, S / 2 + 8);
+  const img = o.getImageData(0, 0, S, S).data;
+  const targets = [];
+  for (let y = 0; y < S; y += step) {
+    for (let x = 0; x < S; x += step) {
+      if (img[(y * S + x) * 4 + 3] > 120) targets.push({ x: x + (W - S) / 2, y: y + (H - S) / 2 });
+    }
+  }
+  omega = { parts: targets.map((t) => ({ x: rnd(0, W), y: rnd(0, H), tx: t.x, ty: t.y })), hold: 0 };
+  omegaRaf = requestAnimationFrame(omegaStep);
+}
+
+function omegaStep(now) {
+  if (!omega) return;
+  ctx.fillStyle = '#05070d';
+  ctx.fillRect(0, 0, W, H);
+  let settled = 0;
+  for (const p of omega.parts) {
+    p.x += (p.tx - p.x) * 0.09;
+    p.y += (p.ty - p.y) * 0.09;
+    if (Math.abs(p.tx - p.x) < 1.4 && Math.abs(p.ty - p.y) < 1.4) settled++;
+    const tw = 0.55 + 0.45 * Math.sin(now / 160 + p.tx / 6);
+    ctx.fillStyle = 'rgba(243,210,107,' + (0.30 + tw * 0.70).toFixed(3) + ')';
+    ctx.fillRect(p.x, p.y, 2.3, 2.3);
+  }
+  if (settled > omega.parts.length * 0.94 && !omega.hold) omega.hold = now;
+  if (omega.hold && now - omega.hold > 2800) { endOmega(); return; }
+  omegaRaf = requestAnimationFrame(omegaStep);
+}
+
+function endOmega() {
+  cancelAnimationFrame(omegaRaf);
+  omega = null;
+  raf = requestAnimationFrame(loop);
+}
+
+/* ---------- the scrolls of knowledge ---------- */
+const BANNER =
+'██████╗ ██╗   ██╗████████╗██╗  ██╗██╗ █████╗\n' +
+'██╔══██╗╚██╗ ██╔╝╚══██╔══╝██║  ██║██║██╔══██╗\n' +
+'██████╔╝ ╚████╔╝    ██║   ███████║██║███████║\n' +
+'██╔═══╝   ╚██╔╝     ██║   ██╔══██║██║██╔══██║\n' +
+'██║        ██║      ██║   ██║  ██║██║██║  ██║\n' +
+'╚═╝        ╚═╝      ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝';
+
+const HELP = [
+  ['help', 'list the incantations'],
+  ['skills', 'behold the keeper\'s constellations'],
+  ['projects', 'the realms the keeper rules'],
+  ['freelance', 'consult the ledger of rates'],
+  ['judge', 'submit yourself to judgment'],
+  ['fortune', 'a whisper of fate'],
+  ['create', 'summon an idea from the void'],
+  ['surprise', 'do not ask what it is'],
+  ['clear', 'wipe the slate (Cmd+K)'],
+];
+
+const SKILLS = [
+  ['JAVA · QUARKUS', 'fast startups, fast judgment'],
+  ['PYTHON · ML', 'you have seen the gradient descend'],
+  ['REACT · NEXT', 'builder of worlds (of components)'],
+  ['TYPESCRIPT', 'prophecy that compiles'],
+  ['REACT NATIVE', 'one codebase, many shores'],
+  ['GO · SWIFT · KOTLIN', 'polyglot by nature, mercenary by choice'],
+  ['SHELLS · TERMINALS', 'you live here'],
+  ['AI · AGENTS', 'you command legions of them'],
+];
+
+const PROJECTS = [
+  ['quizknight', 'a knight of questions — knowledge is its armor'],
+  ['club_website', 'where the faithful gather'],
+  ['portfolio_website', 'the story the keeper tells the world'],
+  ['pythia', 'you are standing in it'],
+];
+
+const IDEAS = [
+  'A quiz where the questions quiz you about quizzes. QuizzKnight².',
+  'A CLI that names your startup from your git history. "MergeConflict Labs".',
+  'A habit tracker with Greek god avatars. Miss a day and Ares judges you.',
+  'An invoice generator with an "ancient wisdom surcharge" line item.',
+  'A screensaver that renders your commit graph as a star map. You already have the stars.',
+  'A browser extension that turns every "quick question" email into a rate card.',
+  'A code editor theme named after Delphi. Everything glows amber.',
+  'A mobile app that turns your portfolio into a quest log. XP for deployments.',
+];
+
+const JUDGMENTS = [
+  'The Oracle has weighed your words. They are neither terrible nor divine — they are "human". Acceptable. The gods bill accordingly.',
+  'I see a merge conflict in your past. You resolved it with honor. The gods allow one (1) celebration.',
+  'You charge too little, traveler. Even the Fates invoice by the hour. Raise your rate — the Oracle has spoken.',
+  'Your intentions are green, but the Oracle senses a half-finished thought lurking in the shadows. Finish it.',
+  'A client will soon say "quick favor". Translate: three days of unpaid work. Quote double.',
+  'You speak many tongues — but the Oracle wonders: do you speak the language of estimates that hold?',
+  'A project grows strong in your care. The Oracle foresees launch, glory, and a deadline you forgot.',
+  'Rest, traveler. Even Athena sleeps. (She denies this. She is a goddess. She does not sleep.)',
+];
+
+const FORTUNES = [
+  'He who ships on Friday shall debug on Saturday.',
+  'The test you skip is the bug you ship.',
+  'A refactor delayed is a refactor doubled.',
+  'Documentation is a love letter to your future self. Write it.',
+  'The feature is never "small". It is only smaller than the last one.',
+  'Premature optimization: the Oracle\'s favorite tragedy.',
+  'Commit early. Commit often. The gods favor those who can roll back.',
+  'Your future self thanks you for meaningful error messages.',
+  'Speak your own name, and the Oracle will answer. (Try it.)',
+];
+
+const PROPHECIES = [
+  'The Oracle gazes into the star map and sees a path forming beneath your feet. It leads somewhere you have drawn many times but never walked. Walk it.',
+  'You will soon explain a complicated thing with a single drawing. Keep the marker. It is your true weapon.',
+  'The Oracle sees a night of tidying ahead. Fear not — what you tidy will emerge golden, like the laurel of Delphi.',
+  'A message will arrive from an unexpected sender. It will be surprisingly good. Answer it, and praise the gods (and the sender).',
+  'You have walked between many worlds — work, craft, play. The Oracle whispers: you are not lost. You are everywhere.',
+  'Someone will ask you what this website is. Smile, and tell them the marble is warm.',
+];
+
+/* ---------- incantations (easter eggs) ---------- */
+function cmdHelp() {
+  print('PYTHIA knows these incantations (or you may simply speak to her):', 'dim');
+  print('', '');
+  for (const [name, desc] of HELP) {
+    print('<span class="cmd">' + name + '</span>' + ' '.repeat(Math.max(1, 14 - name.length)) + '<span class="dim">— ' + desc + '</span>');
+  }
+}
+
+function cmdSkills() {
+  for (const [name, desc] of SKILLS) {
+    print('<span class="cmd">' + name + '</span>' + ' '.repeat(Math.max(1, 26 - name.length)) + '<span class="dim">' + desc + '</span>');
+  }
+}
+
+function cmdProjects() {
+  for (const [name, desc] of PROJECTS) {
+    print('<span class="cmd">' + name + '</span>' + ' '.repeat(Math.max(1, 22 - name.length)) + '<span class="dim">' + desc + '</span>');
+  }
+}
+
+let awaitingRate = false;
+
+function cmdFreelance() {
+  print('The Oracle opens the ledger of rates.', 'dim');
+  typeLine('Speak your daily rate, in EUR:', 'oracle', 11, () => {
+    awaitingRate = true;
+    $prompt.textContent = 'rate>';
+    $cmd.focus();
+  });
+}
+
+function handleRate(raw) {
+  awaitingRate = false;
+  $prompt.textContent = 'pythia>';
+  const rate = parseFloat(raw.replace(',', '.'));
+  if (!isFinite(rate) || rate <= 0) {
+    print('The Oracle cannot divine value from "' + esc(raw.trim()) + '". Enter a number, e.g. 400.', 'err');
+    return;
+  }
+  const eur = (n) => '€' + n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  print(
+    '<span class="cmd">DAILY</span>   ' + eur(rate) + ' <span class="dim">($' + Math.round(rate * 1.1) + ')</span><br>' +
+    '<span class="cmd">WEEKLY</span>  ' + eur(rate * 5) + ' <span class="dim">(×5)</span><br>' +
+    '<span class="cmd">MONTHLY</span> ' + eur(rate * 21) + ' <span class="dim">(×21)</span><br>' +
+    '<span class="cmd">YEARLY</span>  ' + eur(rate * 220) + ' <span class="dim">(×220)</span><br>' +
+    '<span class="dim">— or ' + Math.round(rate * 220 * 340.75).toLocaleString('en-IE') + ' δρχ., if it were still 1999.</span>'
+  );
+  typeLine('Verdict: your time is worth more than this. Add 10% tomorrow.', 'oracle', 11);
+}
+
+function cmdJudge() {
+  typeLine('The Oracle weighs your karma...', 'dim', 8, () => {
+    setTimeout(() => {
+      const v = pick(JUDGMENTS);
+      printText(v, 'oracle');
+      speak(v);
+    }, 800);
+  });
+}
+
+function cmdFortune() {
+  const f = pick(FORTUNES);
+  typeLine('The Oracle whispers:', 'dim', 8, () => {
+    setTimeout(() => printText(f, 'oracle'), 500);
+  });
+}
+
+function cmdCreate() {
+  const idea = pick(IDEAS);
+  typeLine('The void stirs...', 'dim', 8, () => {
+    setTimeout(() => printText(idea, 'oracle'), 600);
+  });
+}
+
+function cmdName() {
+  $prompt.textContent = 'keeper>';
+  const msg = 'The Oracle knows the name of her keeper — he built this temple, and he wrote it in the marble. Speak freely, traveler: you are among friends.';
+  printText(msg, 'oracle');
+  speak(msg);
+}
+
+let busy = false;
+
+function cmdSurprise() {
+  if (busy) { print('The Oracle is already speaking. Patience, mortal.', 'err'); return; }
+  busy = true;
+  const prophecy = pick(PROPHECIES);
+  print('', '');
+  typeLine('The marble trembles.', 'oracle', 14);
+  setTimeout(() => typeLine('The stars are rearranging themselves — this is not normal.', 'oracle', 14), 1200);
+  setTimeout(startOmega, 2600);
+  setTimeout(() => {
+    $('verdict-text').textContent = prophecy;
+    $verdict.classList.add('show');
+    speak(prophecy);
+  }, 5600);
+  const hideAt = 5600 + Math.max(6500, prophecy.split(' ').length * 480);
+  setTimeout(() => {
+    $verdict.classList.remove('show');
+    print('The stars return to their posts. The Oracle has spoken.', 'dim');
+    busy = false;
+  }, hideAt);
+}
+
+$verdict.addEventListener('click', () => $verdict.classList.remove('show'));
+
+function clearLog() {
+  $log.innerHTML = '';
+  entries.length = 0;
+  persist();
+}
+
+/* ---------- conversation with the Oracle ---------- */
+let thinking = false;
+
+function askOracle(message, history) {
+  thinking = true;
+  const d = document.createElement('div');
+  d.className = 'oracle typing';
+  d.textContent = 'The oracle weighs your words';
+  $log.appendChild(d);
+  scroll();
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history }),
+  })
+    .then(async (res) => {
+      let data = null;
+      try { data = await res.json(); } catch (e) { /* not json */ }
+      d.classList.remove('typing');
+      if (res.ok && data && typeof data.reply === 'string') {
+        d.textContent = data.reply;
+        addEntry('text', 'oracle', data.reply);
+      } else {
+        const fallback = pick([
+          'The Oracle has reached the edge of her strength for today. The marble is warm, but the fire is low. Return at dawn — the prophecies are free.',
+          'The Oracle is momentarily overwhelmed by the voices of the crowd. Speak again in a little while.',
+          'The winds of prophecy are against us. The temple servers are restless. Try again, traveler.',
+        ]);
+        d.textContent = fallback;
+        addEntry('text', 'oracle', fallback);
+      }
+      scroll();
+    })
+    .catch(() => {
+      d.classList.remove('typing');
+      const fallback = 'The temple is unreachable — the Oracle cannot hear you from this distance. Check the skies (the internet) and speak again.';
+      d.textContent = fallback;
+      addEntry('text', 'oracle', fallback);
+      scroll();
+    })
+    .finally(() => { thinking = false; });
+}
+
+/* ---------- the interpreter ---------- */
+const COMMANDS = {
+  help: cmdHelp,
+  skills: cmdSkills,
+  projects: cmdProjects,
+  freelance: cmdFreelance,
+  judge: cmdJudge,
+  fortune: cmdFortune,
+  create: cmdCreate,
+  surprise: cmdSurprise,
+  clear: clearLog,
+  sotirios: cmdName,
+  pythia: cmdName,
+};
+
+const hist = [];
+let hi = 0;
+
+function route(raw) {
+  const t = raw.trim().toLowerCase();
+  if (awaitingRate) { handleRate(raw); return; }
+  if (thinking) { print('The Oracle is still speaking. Patience, mortal.', 'err'); return; }
+  if (COMMANDS[t]) { COMMANDS[t](); return; }
+  // everything else is a conversation with the Oracle
+  // (entries already include the just-echoed message; exclude it — the server appends it)
+  const history = [];
+  for (const e of entries.slice(0, -1)) {
+    if (e.c === 'echo' && e.k === 'text') history.push({ role: 'user', content: e.s.slice(0, 600) });
+    else if (e.c === 'oracle' && e.k === 'text') history.push({ role: 'assistant', content: e.s.slice(0, 600) });
+  }
+  askOracle(raw.trim().slice(0, 600), history.slice(-20));
+}
+
+$cmd.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const raw = $cmd.value;
+    $cmd.value = '';
+    if (!raw.trim()) return;
+    hist.push(raw);
+    hi = hist.length;
+    printText(raw.trim(), 'echo');
+    route(raw);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (hi > 0) { hi--; $cmd.value = hist[hi]; }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (hi < hist.length) { hi++; $cmd.value = hist[hi] || ''; }
+  } else if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    clearLog();
+  }
+});
+
+document.addEventListener('click', () => $cmd.focus());
+window.addEventListener('resize', onResize);
+
+/* ---------- awakening ---------- */
+function boot() {
+  if (restoreMemory()) {
+    typeLine('The marble remembers you. Speak, traveler.', 'oracle', 15);
+    return;
+  }
+  $log.innerHTML = '';
+  entries.length = 0;
+  print('<div class="banner">' + BANNER + '</div>');
+  const lines = [
+    ['PYTHIA KERNEL v2.0.0 — γνῶθι σεαυτόν', 'dim'],
+    ['[ OK ] oracle voice ........ linked', 'ok'],
+    ['[ OK ] star charts ......... rendered', 'ok'],
+    ['[ OK ] the void ............ connected', 'ok'],
+    ['[ OK ] judgment module ..... armed', 'ok'],
+  ];
+  let i = 0;
+  const next = () => {
+    if (i < lines.length) { typeLine(lines[i][0], lines[i][1], 8, next); i++; }
+    else {
+      print('', '');
+      typeLine('Welcome, traveler. The marble is warm. Speak to me — or type help for the old incantations.', 'oracle', 15);
+    }
+  };
+  next();
+}
+
+onResize();
+boot();
+raf = requestAnimationFrame(loop);
+$cmd.focus();
+</script>
+</body>
+</html>
