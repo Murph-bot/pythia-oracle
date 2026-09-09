@@ -4,7 +4,7 @@ A public, AI-powered oracle. Any visitor can speak to her; she answers with
 wit, wisdom, and the occasional Greek maxim. Powered by Cloudflare Pages +
 Workers AI — **entirely on the free tier, no API keys needed**.
 
-- Live: https://pythia.pages.dev
+- Live: https://pythia-oracle.pages.dev
 - Built by: Sotirios Goulas ([sotiriosgoulas.com](https://sotiriosgoulas.com))
 
 ## How it works
@@ -37,7 +37,7 @@ npx wrangler pages dev .     # serves the site + functions locally
 
 ```bash
 npx wrangler login           # one-time browser auth
-npx wrangler pages deploy .  # creates/updates pythia.pages.dev
+npx wrangler pages deploy .  # creates/updates the pythia-oracle project
 ```
 
 The AI binding comes from `wrangler.toml` (`[ai] binding = "AI"`).
