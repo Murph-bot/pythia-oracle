@@ -63,6 +63,33 @@ function athensToday() {
 const THINK_RE = /<think>[\s\S]*?<\/think>/gi;
 const SENTENCE_ENDS = '.!?;;'; // includes the Greek question mark, not just ASCII ';'
 
+// Single source of truth for what each request type does: token/temperature
+// budget, and (for everything but chat) the fixed task text sent as the
+// visitor's "message" instead of anything they typed.
+const MODES = {
+  chat: { maxTokens: 320, temperature: 0.6 },
+  judge: {
+    maxTokens: 160,
+    temperature: 0.8,
+    task: 'The visitor typed the incantation "judge". Deliver a short, witty verdict on the visitor, at most 60 words, based on what they have told you in this conversation. If there is no conversation yet, judge them for the bold choice of asking an oracle to judge a stranger. Teasing but kind. Output only the verdict.',
+  },
+  fortune: {
+    maxTokens: 80,
+    temperature: 0.9,
+    task: 'The visitor typed the incantation "fortune". Give one original fortune-cookie proverb for developers and makers: one or two sentences, witty and true. Output only the proverb.',
+  },
+  create: {
+    maxTokens: 120,
+    temperature: 0.9,
+    task: 'The visitor typed the incantation "create". Invent one original, specific, slightly absurd but buildable app or product idea in at most two sentences. If the conversation reveals their interests, tailor it to them. Output only the idea.',
+  },
+  prophecy: {
+    maxTokens: 90,
+    temperature: 0.8,
+    task: 'The visitor typed the incantation "prophecy". Distill everything they have shared in this conversation into a single prophecy about their near future: one sentence, at most 30 words, vivid, hopeful, and specific to them, in the language they have been writing in. If there is no conversation yet, give a striking general prophecy. Output only the prophecy, no quotes.',
+  },
+};
+
 // Pure so a test can assert on it without touching env.AI.
 export function cleanReply(text, truncated) {
   let out = String(text ?? '').replace(THINK_RE, '').trim();
@@ -112,9 +139,9 @@ async function isRateLimited(ip) {
   }
 }
 
-async function runModel(env, model, messages) {
+async function runModel(env, model, messages, maxTokens, temperature) {
   const options = MODELS[model] || {};
-  const res = await env.AI.run(model, { messages, max_tokens: 320, temperature: 0.6, ...options });
+  const res = await env.AI.run(model, { messages, max_tokens: maxTokens, temperature, ...options });
   const text = res && (res.response ?? res.choices?.[0]?.message?.content);
   const truncated = Boolean(res && res.choices?.[0]?.finish_reason === 'length');
   return { text: typeof text === 'string' ? text.trim() : '', truncated };
@@ -124,13 +151,13 @@ async function runModel(env, model, messages) {
 // free neurons are gone for every model), so it aborts the whole chain instead
 // of falling through. A capacity error is model-local and transient, so it
 // gets one retry on the same model before moving on.
-async function askOracle(env, messages) {
+async function askOracle(env, messages, maxTokens, temperature) {
   const chain = [...new Set([env.PYTHIA_MODEL, PRIMARY_MODEL, FALLBACK_MODEL].filter(Boolean))];
   let lastError = { code: 'EMPTY_REPLY' };
   for (const model of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const { text, truncated } = await runModel(env, model, messages);
+        const { text, truncated } = await runModel(env, model, messages, maxTokens, temperature);
         const reply = cleanReply(text, truncated);
         if (reply) return reply;
         break;
@@ -160,9 +187,18 @@ export async function onRequestPost(context) {
     return json({ error: 'BAD_JSON' }, 400);
   }
 
-  const message = typeof body.message === 'string' ? body.message.trim() : '';
-  if (!message) return json({ error: 'EMPTY' }, 400);
-  if (message.length > MAX_MESSAGE) return json({ error: 'TOO_LONG' }, 413);
+  const modeName = typeof body.mode === 'string' ? body.mode : 'chat';
+  if (!Object.hasOwn(MODES, modeName)) return json({ error: 'BAD_MODE' }, 400);
+  const mode = MODES[modeName];
+
+  let message;
+  if (modeName === 'chat') {
+    message = typeof body.message === 'string' ? body.message.trim() : '';
+    if (!message) return json({ error: 'EMPTY' }, 400);
+    if (message.length > MAX_MESSAGE) return json({ error: 'TOO_LONG' }, 413);
+  } else {
+    message = mode.task; // the visitor's input is ignored; the incantation is the message
+  }
 
   const history = Array.isArray(body.history) ? body.history.slice(-MAX_HISTORY) : [];
   const messages = [{ role: 'system', content: systemPrompt(athensToday()) }];
@@ -179,7 +215,7 @@ export async function onRequestPost(context) {
   messages.push({ role: 'user', content: message });
 
   try {
-    const reply = await askOracle(env, messages);
+    const reply = await askOracle(env, messages, mode.maxTokens, mode.temperature);
     if (!reply) return json({ error: 'EMPTY_REPLY' }, 502);
     return json({ reply });
   } catch (err) {

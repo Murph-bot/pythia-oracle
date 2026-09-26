@@ -112,21 +112,36 @@
   #verdict .big { font-size: clamp(26px, 5vw, 52px); color: var(--gold-bright); font-style: italic; line-height: 1.35; max-width: 900px; }
   #verdict .sub { font-size: 14px; color: var(--dim); font-family: var(--mono); letter-spacing: 2px; }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .ask { cursor: pointer; }
+  .ask:hover { color: var(--gold); }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .typing::after { animation: none; content: '…'; }
+    #verdict.show { animation: none; }
+  }
+  @media (max-width: 560px) {
+    #bar .bar-long { display: none; }
+  }
 </style>
 </head>
 <body>
 <canvas id="stars"></canvas>
 <div id="omega-ghost">Ω</div>
 <div id="terminal">
-  <div id="bar"><b>PYTHIA</b> THE ORACLE OF DELPHI — TEMPLE TERMINAL <span>v2.0.0</span></div>
-  <div id="log"></div>
+  <div id="bar"><b>PYTHIA</b> <span><span class="bar-long">THE ORACLE OF DELPHI — </span>TEMPLE TERMINAL</span> <span>v2.0.0</span></div>
+  <div id="log" role="log" aria-live="off"></div>
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
   <div id="input-line">
     <span id="prompt">pythia&gt;</span>
-    <input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="600" placeholder="speak to the oracle…" autofocus>
+    <input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="600" placeholder="speak to the oracle…" autofocus aria-label="Speak to the oracle">
   </div>
 </div>
 <div id="credit">PYTHIA — an oracle by <a href="https://sotiriosgoulas.com" target="_blank" rel="noopener">Sotirios Goulas</a> · γνῶθι σεαυτόν · know thyself</div>
-<div id="verdict">
+<div id="verdict" role="dialog" aria-label="The Oracle has spoken">
   <div class="kicker">THE ORACLE HAS SPOKEN</div>
   <div class="big" id="verdict-text"></div>
   <div class="sub">γνῶθι σεαυτόν — know thyself</div>
@@ -147,16 +162,25 @@ const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
-/* Log entries: { k: 'html'|'text', c: class, s: content, r?: 'user'|'assistant' }
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* Log entries: { k: 'html'|'text', c: class, s: content, r?: 'user'|'assistant', p?: 1 }
    — 'text' entries (user input, oracle replies) are rendered via textContent,
    never innerHTML. `r` marks a genuine conversation turn and is the only
    thing sent back to the server as history; commands, echoes of commands,
-   rate answers, and error/fallback lines carry no `r`. */
+   rate answers, and error/fallback lines carry no `r`. `p: 1` marks a
+   prophecy entry (for the `share` command) and never carries `r`. */
 const entries = [];
 
-function addEntry(kind, cls, content, role) {
+// Bumped by clearLog() so async replies in flight when the slate is wiped
+// know to drop themselves instead of appending to a log that no longer
+// represents them.
+let epoch = 0;
+
+function addEntry(kind, cls, content, role, extra) {
   const entry = { k: kind, c: cls || '', s: content };
   if (role) entry.r = role;
+  if (extra) Object.assign(entry, extra);
   entries.push(entry);
   if (entries.length > 120) entries.splice(0, entries.length - 120);
   persist();
@@ -171,16 +195,30 @@ function renderEntry(entry) {
 }
 
 function print(html, cls) { addEntry('html', cls, html); renderEntry({ k: 'html', c: cls, s: html }); scroll(); }
-function printText(text, cls, role) { addEntry('text', cls, text, role); renderEntry({ k: 'text', c: cls, s: text }); scroll(); }
+function printText(text, cls, role, extra) { addEntry('text', cls, text, role, extra); renderEntry({ k: 'text', c: cls, s: text }); scroll(); }
 
 function scroll() { $log.scrollTop = $log.scrollHeight; }
+
+function announce(text) {
+  const el = $('announcer');
+  if (el) el.textContent = text;
+}
 
 function typeLine(text, cls, speed, done) {
   const d = document.createElement('div');
   if (cls) d.className = cls;
   $log.appendChild(d);
+  if (REDUCED) {
+    d.textContent = text;
+    scroll();
+    if (done) setTimeout(done, 0);
+    return;
+  }
   let i = 0;
   const step = () => {
+    // The slate was wiped mid-type (clearLog removed this node): stop
+    // stepping, but still call done so callers can reset thinking/busy.
+    if (!d.isConnected) { if (done) done(); return; }
     d.textContent = text.slice(0, i++);
     scroll();
     if (i <= text.length) setTimeout(step, speed || 9);
@@ -230,6 +268,17 @@ function restoreMemory() {
   } catch (e) { return false; }
 }
 
+/* ---------- voice (the marble speaks) ---------- */
+const VOICE_KEY = 'pythia-v2-voice';
+let voiceOn = false;
+try { voiceOn = localStorage.getItem(VOICE_KEY) === 'on'; } catch (e) { /* private mode */ }
+
+function cmdVoice() {
+  voiceOn = !voiceOn;
+  try { localStorage.setItem(VOICE_KEY, voiceOn ? 'on' : 'off'); } catch (e) { /* private mode */ }
+  print(voiceOn ? 'The Oracle will now speak her answers aloud.' : 'The Oracle will answer in silence.', 'dim');
+}
+
 /* ---------- the star chart ---------- */
 let W = 0, H = 0, stars = [], shooters = [], raf = 0;
 
@@ -241,10 +290,21 @@ function makeStars() {
   }
 }
 
+function drawStarsStatic() {
+  ctx.clearRect(0, 0, W, H);
+  for (const s of stars) {
+    ctx.fillStyle = 'rgba(205,214,230,' + s.a.toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, 6.283);
+    ctx.fill();
+  }
+}
+
 function onResize() {
   W = canvas.width = innerWidth;
   H = canvas.height = innerHeight;
   makeStars();
+  if (REDUCED) drawStarsStatic();
 }
 
 function loop(now) {
@@ -338,6 +398,9 @@ const HELP = [
   ['fortune', 'a whisper of fate'],
   ['create', 'summon an idea from the void'],
   ['surprise', 'do not ask what it is'],
+  ['prophecy', 'your words, distilled into fate'],
+  ['share', 'carry the prophecy beyond the temple'],
+  ['voice', 'let the Oracle speak aloud (on/off)'],
   ['clear', 'wipe the slate (Cmd+K)'],
 ];
 
@@ -402,9 +465,28 @@ const PROPHECIES = [
   'Someone will ask you what this website is. Smile, and tell them the marble is warm.',
 ];
 
+const ASK_POOL = [
+  'will I find love this year?',
+  'should I learn to code?',
+  'how do I stop procrastinating?',
+  'what should I name my startup?',
+  'Πυθία, τι μου επιφυλάσσει το μέλλον;',
+  'is it time to change jobs?',
+  'explain recursion like an oracle would',
+];
+
+function samplePool(pool, n) {
+  const copy = pool.slice();
+  const out = [];
+  while (out.length < n && copy.length) {
+    out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
+  }
+  return out;
+}
+
 /* ---------- incantations (easter eggs) ---------- */
 function cmdHelp() {
-  print('PYTHIA knows these incantations (or you may simply speak to her):', 'dim');
+  print('PYTHIA knows these incantations (Tab completes them), or you may simply speak to her:', 'dim');
   print('', '');
   for (const [name, desc] of HELP) {
     print('<span class="cmd">' + name + '</span>' + ' '.repeat(Math.max(1, 14 - name.length)) + '<span class="dim">— ' + desc + '</span>');
@@ -453,29 +535,31 @@ function handleRate(raw) {
   typeLine('Verdict: your time is worth more than this. Add 10% tomorrow.', 'oracle', 11);
 }
 
-function cmdJudge() {
-  typeLine('The Oracle weighs your karma...', 'dim', 8, () => {
-    setTimeout(() => {
-      const v = pick(JUDGMENTS);
-      printText(v, 'oracle');
-      speak(v);
-    }, 800);
+// Shared shape for the three AI-powered incantations: show a lead line, ask
+// the oracle, reveal her answer (or a canned fallback on any error) the same
+// way, mark it in the log as an unaddressed oracle line, and announce it.
+function incantation(mode, lead, fallbackList, opts) {
+  thinking = true;
+  const startEpoch = epoch;
+  typeLine(lead, 'dim', 8, () => {
+    if (epoch !== startEpoch) { thinking = false; return; }
+    consult(mode, null, conversation()).then((res) => {
+      if (epoch !== startEpoch) { thinking = false; return; }
+      const text = (res && res.reply) || pick(fallbackList);
+      typeLine(text, 'oracle', 11, () => {
+        if (epoch !== startEpoch) { thinking = false; return; }
+        addEntry('text', 'oracle', text);
+        announce(text);
+        if (opts && opts.speak) speak(text);
+        thinking = false;
+      });
+    });
   });
 }
 
-function cmdFortune() {
-  const f = pick(FORTUNES);
-  typeLine('The Oracle whispers:', 'dim', 8, () => {
-    setTimeout(() => printText(f, 'oracle'), 500);
-  });
-}
-
-function cmdCreate() {
-  const idea = pick(IDEAS);
-  typeLine('The void stirs...', 'dim', 8, () => {
-    setTimeout(() => printText(idea, 'oracle'), 600);
-  });
-}
+function cmdJudge() { incantation('judge', 'The Oracle weighs your karma...', JUDGMENTS, { speak: true }); }
+function cmdFortune() { incantation('fortune', 'The Oracle whispers:', FORTUNES); }
+function cmdCreate() { incantation('create', 'The void stirs...', IDEAS); }
 
 function cmdName() {
   $prompt.textContent = 'keeper>';
@@ -493,7 +577,7 @@ function cmdSurprise() {
   print('', '');
   typeLine('The marble trembles.', 'oracle', 14);
   setTimeout(() => typeLine('The stars are rearranging themselves — this is not normal.', 'oracle', 14), 1200);
-  setTimeout(startOmega, 2600);
+  if (!REDUCED) setTimeout(startOmega, 2600); // reduced motion: go straight to the overlay at the same timing
   setTimeout(() => {
     $('verdict-text').textContent = prophecy;
     $verdict.classList.add('show');
@@ -507,9 +591,163 @@ function cmdSurprise() {
   }, hideAt);
 }
 
+function cmdProphecy() {
+  if (busy) { print('The Oracle is already speaking. Patience, mortal.', 'err'); return; }
+  busy = true;
+  thinking = true;
+  const startEpoch = epoch;
+  typeLine('The Oracle gathers your words...', 'oracle', 14);
+  if (!REDUCED) startOmega();
+  // Gemma often answers in about a second; give the stars time to form the Ω first.
+  const formed = new Promise((r) => setTimeout(r, REDUCED ? 0 : 2600));
+  Promise.all([consult('prophecy', null, conversation()), formed]).then(([res]) => {
+    thinking = false;
+    if (epoch !== startEpoch) { busy = false; return; }
+    const text = (res && res.reply) || pick(PROPHECIES);
+    if (omega) endOmega(); // still animating: end it cleanly rather than let two rAF loops fight
+    $('verdict-text').textContent = text;
+    $verdict.classList.add('show');
+    speak(text);
+    announce(text);
+    printText(text, 'oracle', undefined, { p: 1 });
+    print('Type share to carry this prophecy beyond the temple.', 'dim');
+    const hideAt = Math.max(6500, text.split(' ').length * 480);
+    setTimeout(() => {
+      $verdict.classList.remove('show');
+      busy = false;
+    }, hideAt);
+  });
+}
+
+function wrapText(g, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (line && g.measureText(test).width > maxWidth) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+// Canvas has no letter-spacing API worth relying on cross-browser; space the
+// kicker out by hand instead.
+function drawLetterSpaced(g, text, cx, y, spacing) {
+  const chars = [...text];
+  const widths = chars.map((ch) => g.measureText(ch).width);
+  const total = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
+  let x = cx - total / 2;
+  const prevAlign = g.textAlign;
+  g.textAlign = 'left';
+  chars.forEach((ch, i) => { g.fillText(ch, x, y); x += widths[i] + spacing; });
+  g.textAlign = prevAlign;
+}
+
+const SHARE_MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+function cmdShare() {
+  let last = null;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].p === 1) { last = entries[i]; break; }
+  }
+  if (!last) { print('The Oracle has not yet prophesied for you. Type prophecy first.', 'dim'); return; }
+  shareProphecy(last.s);
+}
+
+function shareProphecy(text) {
+  const cs = getComputedStyle(document.documentElement);
+  const bg = cs.getPropertyValue('--bg').trim();
+  const gold = cs.getPropertyValue('--gold').trim();
+  const goldBright = cs.getPropertyValue('--gold-bright').trim();
+  const dim = cs.getPropertyValue('--dim').trim();
+
+  const IW = 1080, IH = 1350;
+  const c = document.createElement('canvas');
+  c.width = IW; c.height = IH;
+  const g = c.getContext('2d');
+
+  g.fillStyle = bg;
+  g.fillRect(0, 0, IW, IH);
+
+  const glow = g.createRadialGradient(IW / 2, IH / 2, 0, IW / 2, IH / 2, Math.max(IW, IH) * 0.6);
+  glow.addColorStop(0, 'rgba(212,175,55,0.12)');
+  glow.addColorStop(1, 'rgba(5,7,13,0.92)');
+  g.fillStyle = glow;
+  g.fillRect(0, 0, IW, IH);
+
+  for (let i = 0; i < 120; i++) {
+    g.fillStyle = 'rgba(205,214,230,' + rnd(0.15, 0.85).toFixed(3) + ')';
+    g.beginPath();
+    g.arc(rnd(0, IW), rnd(0, IH), rnd(0.6, 1.8), 0, 6.283);
+    g.fill();
+  }
+
+  g.save();
+  g.globalAlpha = 0.05;
+  g.fillStyle = gold;
+  g.font = '900px Georgia, serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('Ω', IW / 2, IH / 2);
+  g.restore();
+
+  g.fillStyle = dim;
+  g.font = '26px ' + SHARE_MONO;
+  g.textBaseline = 'alphabetic';
+  drawLetterSpaced(g, 'THE ORACLE HAS SPOKEN', IW / 2, 220, 7);
+
+  let fontSize = 64;
+  let lines = [text];
+  for (; fontSize >= 40; fontSize -= 2) {
+    g.font = 'italic ' + fontSize + 'px Georgia, serif';
+    lines = wrapText(g, text, 860);
+    if (lines.length * fontSize * 1.35 <= 640) break;
+  }
+  g.fillStyle = goldBright;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  const lineHeight = fontSize * 1.35;
+  const startY = IH / 2 - ((lines.length - 1) * lineHeight) / 2;
+  lines.forEach((line, i) => g.fillText(line, IW / 2, startY + i * lineHeight));
+
+  g.fillStyle = dim;
+  g.font = '22px ' + SHARE_MONO;
+  g.fillText('γνῶθι σεαυτόν — know thyself', IW / 2, startY + lines.length * lineHeight + 50);
+
+  g.fillStyle = gold;
+  g.font = '20px ' + SHARE_MONO;
+  g.fillText('pythia-oracle.pages.dev', IW / 2, IH - 80);
+
+  c.toBlob((blob) => {
+    if (!blob) { print('The prophecy resists the marble today. Try again.', 'dim'); return; }
+    const file = new File([blob], 'pythia-prophecy.png', { type: 'image/png' });
+    const inscribed = () => print('The prophecy is inscribed. (pythia-prophecy.png)', 'dim');
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], text: 'The Oracle has spoken. https://pythia-oracle.pages.dev' })
+        .then(inscribed)
+        .catch((err) => { if (!err || err.name !== 'AbortError') print('The prophecy resists the marble today. Try again.', 'dim'); });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'pythia-prophecy.png';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      inscribed();
+    }
+  }, 'image/png');
+}
+
 $verdict.addEventListener('click', () => $verdict.classList.remove('show'));
 
 function clearLog() {
+  epoch++;
   $log.innerHTML = '';
   entries.length = 0;
   persist();
@@ -518,9 +756,10 @@ function clearLog() {
 /* ---------- conversation with the Oracle ---------- */
 let thinking = false;
 
-// One line per server error code, in character. TOO_LONG/EMPTY/BAD_JSON can't
-// happen from this UI (the input is already capped and validated), so they
-// fall through to the same default as an unrecognized code.
+// One line per server error code, in character. TOO_LONG/EMPTY/BAD_JSON/BAD_MODE
+// can't happen from this UI (the input is already capped and validated, and
+// modes are hardcoded), so they fall through to the same default as an
+// unrecognized code.
 const TEMPLE_RESTLESS = 'The winds of prophecy are against us. The temple servers are restless. Try again, traveler.';
 const ERROR_LINES = {
   RATE_LIMIT: 'The Oracle needs a breath — too many questions in too short a time. Return in a few minutes.',
@@ -529,41 +768,64 @@ const ERROR_LINES = {
   AI: TEMPLE_RESTLESS,
   MODEL: TEMPLE_RESTLESS,
   EMPTY_REPLY: TEMPLE_RESTLESS,
+  NETWORK: 'The temple is unreachable — the Oracle cannot hear you from this distance. Check the skies (the internet) and speak again.',
 };
+
+// The one fetch primitive: every conversational path (chat and the AI-powered
+// incantations) goes through this. Resolves to { reply } or { error }, never
+// rejects, so callers never need a .catch.
+function consult(mode, message, history) {
+  return fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode, message, history }),
+  })
+    .then(async (res) => {
+      let data = null;
+      try { data = await res.json(); } catch (e) { /* not json */ }
+      if (res.ok && data && typeof data.reply === 'string') return { reply: data.reply };
+      return { error: (data && data.error) || 'AI' };
+    })
+    .catch(() => ({ error: 'NETWORK' }));
+}
+
+// Builds the history array the server expects from entries already marked
+// with a role: last 20 turns, each clipped to 600 chars.
+function conversation() {
+  const history = [];
+  for (const e of entries) {
+    if (e.r === 'user' && e.k === 'text') history.push({ role: 'user', content: e.s.slice(0, 600) });
+    else if (e.r === 'assistant' && e.k === 'text') history.push({ role: 'assistant', content: e.s.slice(0, 600) });
+  }
+  return history.slice(-20);
+}
 
 function askOracle(message, history) {
   thinking = true;
+  const startEpoch = epoch;
   const d = document.createElement('div');
   d.className = 'oracle typing';
   d.textContent = 'The oracle weighs your words';
   $log.appendChild(d);
   scroll();
 
-  fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history }),
-  })
-    .then(async (res) => {
-      let data = null;
-      try { data = await res.json(); } catch (e) { /* not json */ }
-      d.remove();
-      if (res.ok && data && typeof data.reply === 'string') {
-        const speed = Math.max(2, Math.min(12, 1800 / data.reply.length));
-        typeLine(data.reply, 'oracle', speed, () => {
-          addEntry('text', 'oracle', data.reply, 'assistant');
-          thinking = false;
-        });
-      } else {
-        printText(ERROR_LINES[data && data.error] || TEMPLE_RESTLESS, 'oracle');
+  consult('chat', message, history).then((res) => {
+    d.remove();
+    if (epoch !== startEpoch) { thinking = false; return; }
+    if (res.reply) {
+      const speed = Math.max(2, Math.min(12, 1800 / res.reply.length));
+      typeLine(res.reply, 'oracle', speed, () => {
+        if (epoch !== startEpoch) { thinking = false; return; }
+        addEntry('text', 'oracle', res.reply, 'assistant');
+        announce(res.reply);
+        if (voiceOn) speak(res.reply);
         thinking = false;
-      }
-    })
-    .catch(() => {
-      d.remove();
-      printText('The temple is unreachable — the Oracle cannot hear you from this distance. Check the skies (the internet) and speak again.', 'oracle');
+      });
+    } else {
+      printText(ERROR_LINES[res.error] || TEMPLE_RESTLESS, 'oracle');
       thinking = false;
-    });
+    }
+  });
 }
 
 /* ---------- the interpreter ---------- */
@@ -576,6 +838,9 @@ const COMMANDS = {
   fortune: cmdFortune,
   create: cmdCreate,
   surprise: cmdSurprise,
+  prophecy: cmdProphecy,
+  share: cmdShare,
+  voice: cmdVoice,
   clear: clearLog,
   sotirios: cmdName,
   pythia: cmdName,
@@ -588,28 +853,47 @@ function route(raw) {
   const t = raw.trim().toLowerCase();
   if (awaitingRate) { printText(raw.trim(), 'echo'); handleRate(raw); return; }
   if (COMMANDS[t]) { printText(raw.trim(), 'echo'); COMMANDS[t](); return; }
-  // everything else is a conversation with the Oracle: build history from
-  // entries already marked with a role BEFORE echoing this new message, so
-  // the echo doesn't end up duplicated into its own history.
-  const history = [];
-  for (const e of entries) {
-    if (e.r === 'user' && e.k === 'text') history.push({ role: 'user', content: e.s.slice(0, 600) });
-    else if (e.r === 'assistant' && e.k === 'text') history.push({ role: 'assistant', content: e.s.slice(0, 600) });
-  }
+  // Build history from entries already marked with a role BEFORE echoing this
+  // new message, so the echo doesn't end up duplicated into its own history.
+  const history = conversation();
   const message = raw.trim().slice(0, 600);
   printText(message, 'echo', 'user');
-  askOracle(message, history.slice(-20));
+  askOracle(message, history);
+}
+
+function submit(raw) {
+  if (thinking) return; // the Oracle is mid-reply; leave the text, say nothing
+  if (!raw.trim()) { $cmd.value = ''; return; }
+  $cmd.value = '';
+  hist.push(raw);
+  hi = hist.length;
+  route(raw);
+}
+
+function longestCommonPrefix(strs) {
+  let prefix = strs[0];
+  for (let i = 1; i < strs.length && prefix; i++) {
+    while (!strs[i].startsWith(prefix)) prefix = prefix.slice(0, -1);
+  }
+  return prefix;
 }
 
 $cmd.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
-    if (thinking) return; // the Oracle is mid-reply; leave the text, say nothing
-    const raw = $cmd.value;
-    if (!raw.trim()) { $cmd.value = ''; return; }
-    $cmd.value = '';
-    hist.push(raw);
-    hi = hist.length;
-    route(raw);
+    submit($cmd.value);
+  } else if (e.key === 'Tab') {
+    e.preventDefault();
+    if (awaitingRate) return;
+    const val = $cmd.value.trim().toLowerCase();
+    if (!val) return;
+    const matches = HELP.map(([name]) => name).filter((name) => name.startsWith(val));
+    if (matches.length === 1) {
+      $cmd.value = matches[0];
+    } else if (matches.length > 1) {
+      const lcp = longestCommonPrefix(matches);
+      if (lcp.length > val.length) $cmd.value = lcp;
+      else print(matches.join('  '), 'dim');
+    }
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
     if (hi > 0) { hi--; $cmd.value = hist[hi]; }
@@ -620,6 +904,12 @@ $cmd.addEventListener('keydown', (e) => {
     e.preventDefault();
     clearLog();
   }
+});
+
+$log.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-ask]');
+  if (!el || thinking || busy || awaitingRate) return;
+  submit(el.dataset.ask);
 });
 
 document.addEventListener('click', () => $cmd.focus());
@@ -646,7 +936,12 @@ function boot() {
     if (i < lines.length) { typeLine(lines[i][0], lines[i][1], 8, next); i++; }
     else {
       print('', '');
-      typeLine('Welcome, traveler. The marble is warm. Ask me anything (love, work, code, fate), in any language. Or type help for the old incantations.', 'oracle', 15);
+      typeLine('Welcome, traveler. The marble is warm. Ask me anything (love, work, code, fate), in any language. Or type help for the old incantations.', 'oracle', 15, () => {
+        print('try asking:', 'dim');
+        for (const q of samplePool(ASK_POOL, 3)) {
+          print('<span class="ask" data-ask="' + esc(q) + '">' + esc('› ' + q) + '</span>', 'dim');
+        }
+      });
     }
   };
   next();
@@ -654,7 +949,7 @@ function boot() {
 
 onResize();
 boot();
-raf = requestAnimationFrame(loop);
+if (!REDUCED) raf = requestAnimationFrame(loop);
 $cmd.focus();
 </script>
 </body>

@@ -22,7 +22,15 @@ Workers AI (@cf/google/gemma-4-26b-a4b-it, falls back to
 
 - Conversations: chat-first. Type anything — Pythia answers. The v1 terminal
   commands (`surprise`, `fortune`, `judge`, `freelance`, `skills`, `projects`,
-  `create`, `help`, `clear`) still work as hidden easter eggs.
+  `create`, `help`, `clear`) still work as hidden easter eggs. `judge`,
+  `fortune`, and `create` now ask the Oracle for a fresh AI answer each time,
+  falling back to a canned line if the request fails.
+- `prophecy` distills the conversation so far into a one-line fate, shown on
+  the full-screen verdict overlay and spoken aloud; `share` renders the last
+  prophecy as a PNG (native share sheet if available, otherwise a download).
+- `voice` toggles whether ordinary chat replies are also spoken aloud
+  (`judge`/`surprise`/`prophecy` always speak, regardless of this setting).
+- Tab-completes any incantation name while typing in the terminal.
 - Memory: the conversation lives in the visitor's own browser (localStorage).
   The server keeps nothing.
 - Security: no secrets exist in the client. The Workers AI binding is

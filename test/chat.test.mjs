@@ -98,6 +98,44 @@ test('history entries with bad roles or types are filtered before reaching the m
   ]);
 });
 
+test('mode "fortune" sends the fortune task text as the last user message and max_tokens 80', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'A proverb.' }));
+
+  const res = await onRequestPost({ request: makeRequest({ mode: 'fortune' }), env });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { reply: 'A proverb.' });
+  const sent = calls[0].opts.messages;
+  assert.equal(
+    sent[sent.length - 1].content,
+    'The visitor typed the incantation "fortune". Give one original fortune-cookie proverb for developers and makers: one or two sentences, witty and true. Output only the proverb.'
+  );
+  assert.equal(calls[0].opts.max_tokens, 80);
+});
+
+test('unknown mode returns 400 BAD_MODE with no AI call', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'unused' }));
+
+  for (const mode of ['nonsense', 'toString', '__proto__']) {
+    const res = await onRequestPost({ request: makeRequest({ mode }), env });
+    assert.equal(res.status, 400, mode);
+    assert.deepEqual(await res.json(), { error: 'BAD_MODE' });
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('mode "prophecy" with no message is accepted', async () => {
+  stubCaches();
+  const { env } = makeEnv(async () => ({ response: 'A prophecy.' }));
+
+  const res = await onRequestPost({ request: makeRequest({ mode: 'prophecy' }), env });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { reply: 'A prophecy.' });
+});
+
 test('capacity error (3040) retries the same model once before falling back', async () => {
   stubCaches();
   let gemmaCalls = 0;

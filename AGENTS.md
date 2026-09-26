@@ -9,9 +9,35 @@
 3. Full round-trip requires `npx wrangler pages dev .` or a live deploy.
 4. Browser checks: Playwright against the deployed URL — chat round-trip,
    easter eggs (`surprise`, `freelance`), localStorage persistence on reload,
-   zero console errors, 390px mobile viewport.
+   zero console errors, 390px mobile viewport. Also check: the `prophecy`
+   overlay appears and hides, `share` downloads/produces a PNG, Tab-completes
+   an incantation name, and clicking one of the boot-time example questions
+   submits it.
 
 ## Known blockers / gotchas
+
+- **Modes table**: `functions/api/chat.js` has a `MODES` table (`chat`,
+  `judge`, `fortune`, `create`, `prophecy`) that is the single source of
+  truth for per-request `maxTokens`/`temperature` and, for every mode but
+  `chat`, the fixed task text sent as the "message" (the visitor's own text
+  is ignored for those modes). An unrecognized `mode` in the request body
+  returns `400 BAD_MODE` before any AI call.
+- **Prophecy log entries**: a `prophecy` reply is appended to the client log
+  as a text entry with `p: 1` (no `r`, so it's never sent back as
+  conversation history). `share` looks backwards through `entries` for the
+  most recent `p === 1` entry and renders it to a PNG.
+- **Clear-mid-reply epoch guard**: a module-level `epoch` counter in
+  `index.html`, bumped by `clearLog()`. Every async reply path (chat, the
+  AI-powered incantations, prophecy) captures `epoch` before it starts and
+  checks it again wherever it would otherwise touch the DOM or append to
+  `entries`; a mismatch means the slate was wiped mid-flight, so the path
+  drops its output silently but still resets `thinking`/`busy`. `typeLine`
+  itself also stops stepping once its element is no longer connected.
+- **Reduced motion**: `matchMedia('(prefers-reduced-motion: reduce)')` is
+  read once into `REDUCED`. Under it, `typeLine` sets full text immediately,
+  the star field draws once statically (redrawn only on resize, no rAF
+  loop), and `startOmega` is never called (surprise/prophecy still time the
+  overlay reveal the same way, they just skip the star-formation animation).
 
 - **Deploy needs auth**: `npx wrangler login` (browser OAuth) — only the user
   can do this. Everything else works without it.
