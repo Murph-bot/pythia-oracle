@@ -71,7 +71,7 @@
   .dim { color: var(--dim); }
   .ok { color: var(--ok); }
   .err { color: var(--err); }
-  .oracle { color: var(--gold-bright); font-family: var(--serif); font-style: italic; font-size: 15px; }
+  .oracle { color: var(--gold-bright); font-family: var(--serif); font-style: italic; font-size: 15px; white-space: pre-wrap; }
   .echo { color: var(--gold); }
   .cmd { color: var(--gold-bright); font-weight: 600; }
   .typing::after {
@@ -122,7 +122,7 @@
   <div id="log"></div>
   <div id="input-line">
     <span id="prompt">pythia&gt;</span>
-    <input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="speak to the oracle…" autofocus>
+    <input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="600" placeholder="speak to the oracle…" autofocus>
   </div>
 </div>
 <div id="credit">PYTHIA — an oracle by <a href="https://sotiriosgoulas.com" target="_blank" rel="noopener">Sotirios Goulas</a> · γνῶθι σεαυτόν · know thyself</div>
@@ -147,12 +147,17 @@ const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
-/* Log entries: { k: 'html'|'text', c: class, s: content } — 'text' entries
-   (user input, oracle replies) are rendered via textContent, never innerHTML. */
+/* Log entries: { k: 'html'|'text', c: class, s: content, r?: 'user'|'assistant' }
+   — 'text' entries (user input, oracle replies) are rendered via textContent,
+   never innerHTML. `r` marks a genuine conversation turn and is the only
+   thing sent back to the server as history; commands, echoes of commands,
+   rate answers, and error/fallback lines carry no `r`. */
 const entries = [];
 
-function addEntry(kind, cls, content) {
-  entries.push({ k: kind, c: cls || '', s: content });
+function addEntry(kind, cls, content, role) {
+  const entry = { k: kind, c: cls || '', s: content };
+  if (role) entry.r = role;
+  entries.push(entry);
   if (entries.length > 120) entries.splice(0, entries.length - 120);
   persist();
 }
@@ -166,7 +171,7 @@ function renderEntry(entry) {
 }
 
 function print(html, cls) { addEntry('html', cls, html); renderEntry({ k: 'html', c: cls, s: html }); scroll(); }
-function printText(text, cls) { addEntry('text', cls, text); renderEntry({ k: 'text', c: cls, s: text }); scroll(); }
+function printText(text, cls, role) { addEntry('text', cls, text, role); renderEntry({ k: 'text', c: cls, s: text }); scroll(); }
 
 function scroll() { $log.scrollTop = $log.scrollHeight; }
 
@@ -513,6 +518,19 @@ function clearLog() {
 /* ---------- conversation with the Oracle ---------- */
 let thinking = false;
 
+// One line per server error code, in character. TOO_LONG/EMPTY/BAD_JSON can't
+// happen from this UI (the input is already capped and validated), so they
+// fall through to the same default as an unrecognized code.
+const TEMPLE_RESTLESS = 'The winds of prophecy are against us. The temple servers are restless. Try again, traveler.';
+const ERROR_LINES = {
+  RATE_LIMIT: 'The Oracle needs a breath — too many questions in too short a time. Return in a few minutes.',
+  BUDGET: 'The Oracle has reached the edge of her strength for today. The marble is warm, but the fire is low. Return at dawn — the prophecies are free.',
+  CAPACITY: TEMPLE_RESTLESS,
+  AI: TEMPLE_RESTLESS,
+  MODEL: TEMPLE_RESTLESS,
+  EMPTY_REPLY: TEMPLE_RESTLESS,
+};
+
 function askOracle(message, history) {
   thinking = true;
   const d = document.createElement('div');
@@ -529,29 +547,23 @@ function askOracle(message, history) {
     .then(async (res) => {
       let data = null;
       try { data = await res.json(); } catch (e) { /* not json */ }
-      d.classList.remove('typing');
+      d.remove();
       if (res.ok && data && typeof data.reply === 'string') {
-        d.textContent = data.reply;
-        addEntry('text', 'oracle', data.reply);
+        const speed = Math.max(2, Math.min(12, 1800 / data.reply.length));
+        typeLine(data.reply, 'oracle', speed, () => {
+          addEntry('text', 'oracle', data.reply, 'assistant');
+          thinking = false;
+        });
       } else {
-        const fallback = pick([
-          'The Oracle has reached the edge of her strength for today. The marble is warm, but the fire is low. Return at dawn — the prophecies are free.',
-          'The Oracle is momentarily overwhelmed by the voices of the crowd. Speak again in a little while.',
-          'The winds of prophecy are against us. The temple servers are restless. Try again, traveler.',
-        ]);
-        d.textContent = fallback;
-        addEntry('text', 'oracle', fallback);
+        printText(ERROR_LINES[data && data.error] || TEMPLE_RESTLESS, 'oracle');
+        thinking = false;
       }
-      scroll();
     })
     .catch(() => {
-      d.classList.remove('typing');
-      const fallback = 'The temple is unreachable — the Oracle cannot hear you from this distance. Check the skies (the internet) and speak again.';
-      d.textContent = fallback;
-      addEntry('text', 'oracle', fallback);
-      scroll();
-    })
-    .finally(() => { thinking = false; });
+      d.remove();
+      printText('The temple is unreachable — the Oracle cannot hear you from this distance. Check the skies (the internet) and speak again.', 'oracle');
+      thinking = false;
+    });
 }
 
 /* ---------- the interpreter ---------- */
@@ -574,27 +586,29 @@ let hi = 0;
 
 function route(raw) {
   const t = raw.trim().toLowerCase();
-  if (awaitingRate) { handleRate(raw); return; }
-  if (thinking) { print('The Oracle is still speaking. Patience, mortal.', 'err'); return; }
-  if (COMMANDS[t]) { COMMANDS[t](); return; }
-  // everything else is a conversation with the Oracle
-  // (entries already include the just-echoed message; exclude it — the server appends it)
+  if (awaitingRate) { printText(raw.trim(), 'echo'); handleRate(raw); return; }
+  if (COMMANDS[t]) { printText(raw.trim(), 'echo'); COMMANDS[t](); return; }
+  // everything else is a conversation with the Oracle: build history from
+  // entries already marked with a role BEFORE echoing this new message, so
+  // the echo doesn't end up duplicated into its own history.
   const history = [];
-  for (const e of entries.slice(0, -1)) {
-    if (e.c === 'echo' && e.k === 'text') history.push({ role: 'user', content: e.s.slice(0, 600) });
-    else if (e.c === 'oracle' && e.k === 'text') history.push({ role: 'assistant', content: e.s.slice(0, 600) });
+  for (const e of entries) {
+    if (e.r === 'user' && e.k === 'text') history.push({ role: 'user', content: e.s.slice(0, 600) });
+    else if (e.r === 'assistant' && e.k === 'text') history.push({ role: 'assistant', content: e.s.slice(0, 600) });
   }
-  askOracle(raw.trim().slice(0, 600), history.slice(-20));
+  const message = raw.trim().slice(0, 600);
+  printText(message, 'echo', 'user');
+  askOracle(message, history.slice(-20));
 }
 
 $cmd.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
+    if (thinking) return; // the Oracle is mid-reply; leave the text, say nothing
     const raw = $cmd.value;
+    if (!raw.trim()) { $cmd.value = ''; return; }
     $cmd.value = '';
-    if (!raw.trim()) return;
     hist.push(raw);
     hi = hist.length;
-    printText(raw.trim(), 'echo');
     route(raw);
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
@@ -632,7 +646,7 @@ function boot() {
     if (i < lines.length) { typeLine(lines[i][0], lines[i][1], 8, next); i++; }
     else {
       print('', '');
-      typeLine('Welcome, traveler. The marble is warm. Speak to me — or type help for the old incantations.', 'oracle', 15);
+      typeLine('Welcome, traveler. The marble is warm. Ask me anything (love, work, code, fate), in any language. Or type help for the old incantations.', 'oracle', 15);
     }
   };
   next();
