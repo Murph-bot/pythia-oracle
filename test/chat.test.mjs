@@ -23,8 +23,25 @@ function makeEnv(impl) {
   return { env, calls };
 }
 
-function makeRequest(body) {
-  return { headers: { get: () => '203.0.113.9' }, json: async () => body };
+function makeRequest(body, extraHeaders = {}) {
+  const headers = { 'cf-connecting-ip': '203.0.113.9', ...extraHeaders };
+  return {
+    url: 'https://pythia-oracle.pages.dev/api/chat',
+    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+    json: async () => body,
+  };
+}
+
+// A working Cache API stand-in so counters actually count.
+function memoryCaches() {
+  const store = new Map();
+  globalThis.caches = {
+    default: {
+      match: async (req) => store.get(req.url),
+      put: async (req, res) => { store.set(req.url, res); },
+    },
+  };
+  return store;
 }
 
 test('gemma-shaped response wins: gemma tried first with thinking disabled, reply cleaned', async () => {
@@ -159,4 +176,56 @@ test('non-object JSON bodies (null, number, array) return 400 BAD_JSON without a
     assert.deepEqual(await res.json(), { error: 'BAD_JSON' });
   }
   assert.equal(calls.length, 0);
+});
+
+test('history is trimmed to a total character budget, keeping the most recent turns', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'ok' }));
+  const history = Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: String(i % 10).repeat(600) }));
+  await onRequestPost({ request: makeRequest({ message: 'hi', history }), env });
+  const sent = calls[0].opts.messages.slice(1, -1);
+  const total = sent.reduce((n, m) => n + m.content.length, 0);
+  assert.ok(total <= 4000, `history chars ${total} > 4000`);
+  assert.equal(sent[sent.length - 1].content, history[19].content, 'newest turn kept');
+});
+
+test('cross-origin browser requests are refused with 403 and no AI call', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'ok' }));
+  const res = await onRequestPost({ request: makeRequest({ message: 'hi' }, { origin: 'https://evil.example' }), env });
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: 'BAD_ORIGIN' });
+  const same = await onRequestPost({ request: makeRequest({ message: 'hi' }, { origin: 'https://pythia-oracle.pages.dev' }), env });
+  assert.equal(same.status, 200);
+  assert.equal(calls.length, 1);
+});
+
+test('one IP gets at most 100 AI replies per UTC day even across 10-minute windows', async () => {
+  const store = memoryCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'ok' }));
+  let blocked = 0;
+  const realNow = Date.now;
+  try {
+    for (let i = 0; i < 120; i++) {
+      // 6 windows of 20, all on the same UTC day
+      Date.now = () => Date.UTC(2026, 9, 2, 1, 0, 0) + Math.floor(i / 20) * 601_000;
+      const res = await onRequestPost({ request: makeRequest({ message: 'hi' }), env });
+      if (res.status === 429) blocked++;
+    }
+  } finally { Date.now = realNow; }
+  assert.equal(calls.length, 100);
+  assert.equal(blocked, 20);
+  assert.ok(store.size > 0);
+});
+
+test('optional KV global daily cap returns BUDGET once spent', async () => {
+  stubCaches();
+  const kv = new Map();
+  const { env, calls } = makeEnv(async () => ({ response: 'ok' }));
+  env.PYTHIA_KV = { get: async (k) => kv.get(k) ?? null, put: async (k, v) => { kv.set(k, v); } };
+  env.PYTHIA_DAILY_CAP = '2';
+  const codes = [];
+  for (let i = 0; i < 3; i++) codes.push((await onRequestPost({ request: makeRequest({ message: 'hi' }), env })).status);
+  assert.deepEqual(codes, [200, 200, 429]);
+  assert.equal(calls.length, 2);
 });

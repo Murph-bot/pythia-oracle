@@ -60,6 +60,11 @@ The AI binding comes from `wrangler.toml` (`[ai] binding = "AI"`).
 - **Requests**: static assets are unlimited; `/api/chat` counts against the
   100k/day Workers free quota — far beyond MVP needs.
 - **Rate limit**: 20 messages / 10 minutes per visitor (Cache API, edge-local).
+- **Daily caps**: 100 AI replies per visitor per UTC day (Cache API, edge-local),
+  plus an optional global ceiling (default 700/day, `PYTHIA_DAILY_CAP`) once a
+  `PYTHIA_KV` namespace is bound (see `wrangler.toml`).
+- **History budget**: at most 4,000 chars of prior turns reach the model.
+- **Origin**: cross-site browser POSTs to `/api/chat` get `403 BAD_ORIGIN`.
 
 ### Model chain
 

@@ -6,6 +6,9 @@ const MAX_MESSAGE = 600;
 const MAX_HISTORY = 20;
 const RATE_LIMIT = 20; // requests per window (replies are longer conversations now)
 const RATE_WINDOW = 600; // seconds
+const DAILY_PER_IP = 100; // AI replies per visitor per UTC day
+const MAX_HISTORY_CHARS = 4000; // total history sent to the model, newest first
+const DEFAULT_DAILY_CAP = 700; // global AI replies per UTC day (needs PYTHIA_KV)
 
 // Gemma answers in an OpenAI-shaped response (res.choices[0].message.content)
 // and, without enable_thinking: false, burns its whole token budget on hidden
@@ -116,26 +119,77 @@ const json = (body, status = 200) =>
     headers: { 'Content-Type': 'application/json' },
   });
 
-// Per-IP sliding window via the Cache API. Approximate (edge-local), not a
-// hard global quota — adequate for an MVP; upgrade path: Workers Rate Limiting
-// API or a Durable Object.
-async function isRateLimited(ip) {
+// Fixed-window counter via the Cache API. Edge-local (per Cloudflare
+// location), approximate, fail-open. Pages Functions cannot use the Workers
+// Rate Limiting binding, so the hard global ceiling lives in KV (below).
+async function overLimit(key, limit, ttlSeconds) {
   try {
-    const window = Math.floor(Date.now() / (RATE_WINDOW * 1000));
-    const key = `https://pythia.invalid/rl/${window}/${encodeURIComponent(ip)}`;
-    const req = new Request(key);
+    const req = new Request(`https://pythia.invalid/rl/${key}`);
     const cached = await caches.default.match(req);
     // Count lives in a header, not the body: Response bodies are one-shot,
     // and re-reading a consumed body would throw and break the limiter.
     const count = cached ? parseInt(cached.headers.get('x-count') || '0', 10) || 0 : 0;
-    if (count >= RATE_LIMIT) return true;
+    if (count >= limit) return true;
     await caches.default.put(
       req,
-      new Response(null, { headers: { 'X-Count': String(count + 1), 'Cache-Control': `s-maxage=${RATE_WINDOW}` } })
+      new Response(null, { headers: { 'X-Count': String(count + 1), 'Cache-Control': `s-maxage=${ttlSeconds}` } })
     );
     return false;
   } catch {
     return false; // fail open: the temple stays open even if the ledger glitches
+  }
+}
+
+const utcDay = () => new Date(Date.now()).toISOString().slice(0, 10);
+
+function isRateLimited(ip) {
+  const window = Math.floor(Date.now() / (RATE_WINDOW * 1000));
+  return overLimit(`w/${window}/${encodeURIComponent(ip)}`, RATE_LIMIT, RATE_WINDOW);
+}
+
+function isOverDailyIpCap(ip) {
+  return overLimit(`d/${utcDay()}/${encodeURIComponent(ip)}`, DAILY_PER_IP, 86400);
+}
+
+// Optional global daily ceiling. Only active when a KV namespace is bound as
+// PYTHIA_KV, so one actor rotating IPs cannot spend the whole neuron budget.
+// KV is eventually consistent, so this can overshoot slightly. Fails open.
+async function isOverGlobalCap(env) {
+  if (!env.PYTHIA_KV) return false;
+  try {
+    const cap = parseInt(env.PYTHIA_DAILY_CAP || '', 10) || DEFAULT_DAILY_CAP;
+    const key = `global/${utcDay()}`;
+    const count = parseInt((await env.PYTHIA_KV.get(key)) || '0', 10) || 0;
+    if (count >= cap) return true;
+    await env.PYTHIA_KV.put(key, String(count + 1), { expirationTtl: 172800 });
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Keeps the newest turns whose combined length fits the budget.
+function trimHistory(turns) {
+  const kept = [];
+  let total = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    total += turns[i].content.length;
+    if (total > MAX_HISTORY_CHARS) break;
+    kept.unshift(turns[i]);
+  }
+  return kept;
+}
+
+// Browsers always send Origin on cross-site POSTs. Refuse other sites so the
+// oracle cannot be embedded elsewhere. Scripts can omit Origin; the per-IP and
+// global caps cover them.
+function isForeignOrigin(request) {
+  const origin = request.headers.get('origin');
+  if (!origin) return false;
+  try {
+    return new URL(origin).host !== new URL(request.url).host;
+  } catch {
+    return true;
   }
 }
 
@@ -175,6 +229,8 @@ async function askOracle(env, messages, maxTokens, temperature) {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
+  if (isForeignOrigin(request)) return json({ error: 'BAD_ORIGIN' }, 403);
+
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   if (await isRateLimited(ip)) {
     return json({ error: 'RATE_LIMIT' }, 429);
@@ -205,7 +261,7 @@ export async function onRequestPost(context) {
   }
 
   const history = Array.isArray(body.history) ? body.history.slice(-MAX_HISTORY) : [];
-  const messages = [{ role: 'system', content: systemPrompt(athensToday()) }];
+  const turns = [];
   for (const h of history) {
     if (
       h &&
@@ -213,10 +269,14 @@ export async function onRequestPost(context) {
       typeof h.content === 'string' &&
       h.content.length > 0
     ) {
-      messages.push({ role: h.role, content: h.content.slice(0, MAX_MESSAGE) });
+      turns.push({ role: h.role, content: h.content.slice(0, MAX_MESSAGE) });
     }
   }
+  const messages = [{ role: 'system', content: systemPrompt(athensToday()) }, ...trimHistory(turns)];
   messages.push({ role: 'user', content: message });
+
+  if (await isOverDailyIpCap(ip)) return json({ error: 'RATE_LIMIT' }, 429);
+  if (await isOverGlobalCap(env)) return json({ error: 'BUDGET' }, 429);
 
   try {
     const reply = await askOracle(env, messages, mode.maxTokens, mode.temperature);
