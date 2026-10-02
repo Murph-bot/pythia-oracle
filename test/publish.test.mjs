@@ -20,7 +20,7 @@ test('Pages publishes a dedicated folder, not the repo root', () => {
 
 test('published folder holds only site files (no docs, config, tests, source)', () => {
   const files = walk(join(root, outDir));
-  const allowed = /^(index\.html|404\.html|robots\.txt|_headers|og\.png|favicon\.svg)$/;
+  const allowed = /^(index\.html|app\.js|404\.html|robots\.txt|_headers|og\.png|favicon\.svg)$/;
   const leaked = files.filter((f) => !allowed.test(f));
   assert.deepEqual(leaked, []);
 });

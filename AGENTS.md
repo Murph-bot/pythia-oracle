@@ -2,8 +2,8 @@
 
 ## Verify before reporting
 
-1. Syntax: `node --check functions/api/chat.js` + extract inline `<script>` from
-   `public/index.html` and `node --check` it.
+1. Syntax: `node --check functions/api/chat.js && node --check public/app.js` (the client lives in
+   public/app.js; index.html has no inline script so the CSP can stay strict).
 2. `npm test` — unit tests for `functions/api/chat.js` (`test/chat.test.mjs`),
    stubbing `env.AI` + `caches`.
 3. Full round-trip requires `npx wrangler pages dev` (reads public/ from wrangler.toml) or a live deploy.
