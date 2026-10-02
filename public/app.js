@@ -83,10 +83,13 @@ function speak(text) {
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'en-GB';
+    // The oracle answers in the visitor's language; Greek needs a Greek voice.
+    const greek = /[\u0370-\u03FF\u1F00-\u1FFF]/.test(text);
+    u.lang = greek ? 'el-GR' : 'en-GB';
     u.rate = 0.88;
     u.pitch = 0.62;
-    const v = speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith('en'));
+    const prefix = greek ? 'el' : 'en';
+    const v = speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith(prefix));
     if (v) u.voice = v;
     speechSynthesis.speak(u);
   } catch (e) { /* the oracle may be silent */ }
@@ -109,8 +112,15 @@ function restoreMemory() {
     const hasConversation = saved.some((e) => e && (e.c === 'echo' || e.c === 'oracle'));
     if (!hasConversation) return false;
     $log.innerHTML = '';
+    // Stored HTML is untrusted on the way back in (anything can write to
+    // localStorage), so restored 'html' entries render as their plain text.
+    // DOMParser documents are inert: no scripts run, no images load.
+    const parser = new DOMParser();
     for (const e of saved) {
-      if (e && typeof e.s === 'string' && (e.k === 'html' || e.k === 'text')) renderEntry({ k: e.k, c: e.c || '', s: e.s });
+      if (!e || typeof e.s !== 'string') continue;
+      if (e.k === 'text') renderEntry({ k: 'text', c: e.c || '', s: e.s });
+      else if (e.k === 'html' && (e.s === BANNER_HTML || e.s === '<div class="banner">' + BANNER + '</div>')) renderEntry({ k: 'html', c: '', s: BANNER_HTML });
+      else if (e.k === 'html') renderEntry({ k: 'text', c: e.c || '', s: parser.parseFromString(e.s, 'text/html').body.textContent || '' });
     }
     entries.length = 0;
     entries.push(...saved);
@@ -239,6 +249,7 @@ const BANNER =
 '██╔═══╝   ╚██╔╝     ██║   ██╔══██║██║██╔══██║\n' +
 '██║        ██║      ██║   ██║  ██║██║██║  ██║\n' +
 '╚═╝        ╚═╝      ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝';
+const BANNER_HTML = '<div class="banner" aria-hidden="true">' + BANNER + '</div>';
 
 const HELP = [
   ['help', 'list the incantations'],
@@ -432,6 +443,7 @@ function cmdSurprise() {
   setTimeout(() => {
     $('verdict-text').textContent = prophecy;
     $verdict.classList.add('show');
+    $verdict.focus();
     speak(prophecy);
   }, 5600);
   const hideAt = 5600 + Math.max(6500, prophecy.split(' ').length * 480);
@@ -458,6 +470,7 @@ function cmdProphecy() {
     if (omega) endOmega(); // still animating: end it cleanly rather than let two rAF loops fight
     $('verdict-text').textContent = text;
     $verdict.classList.add('show');
+    $verdict.focus();
     speak(text);
     announce(text);
     printText(text, 'oracle', undefined, { p: 1 });
@@ -596,6 +609,12 @@ function shareProphecy(text) {
 }
 
 $verdict.addEventListener('click', () => $verdict.classList.remove('show'));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $verdict.classList.contains('show')) {
+    $verdict.classList.remove('show');
+    $cmd.focus();
+  }
+});
 
 function clearLog() {
   epoch++;
@@ -763,7 +782,13 @@ $log.addEventListener('click', (e) => {
   submit(el.dataset.ask);
 });
 
-document.addEventListener('click', () => $cmd.focus());
+// Refocus the input on background clicks only: leave links, the input, and
+// any text the visitor is selecting (to copy a reply) alone.
+document.addEventListener('click', (e) => {
+  if (e.target.closest('a, input, button')) return;
+  if (String(getSelection().toString())) return;
+  $cmd.focus();
+});
 window.addEventListener('resize', onResize);
 
 /* ---------- awakening ---------- */
@@ -774,7 +799,7 @@ function boot() {
   }
   $log.innerHTML = '';
   entries.length = 0;
-  print('<div class="banner">' + BANNER + '</div>');
+  print(BANNER_HTML);
   const lines = [
     ['PYTHIA KERNEL v2.0.0 — γνῶθι σεαυτόν', 'dim'],
     ['[ OK ] oracle voice ........ linked', 'ok'],
