@@ -3,10 +3,10 @@
 ## Verify before reporting
 
 1. Syntax: `node --check functions/api/chat.js` + extract inline `<script>` from
-   `index.html` and `node --check` it.
+   `public/index.html` and `node --check` it.
 2. `npm test` — unit tests for `functions/api/chat.js` (`test/chat.test.mjs`),
    stubbing `env.AI` + `caches`.
-3. Full round-trip requires `npx wrangler pages dev .` or a live deploy.
+3. Full round-trip requires `npx wrangler pages dev` (reads public/ from wrangler.toml) or a live deploy.
 4. Browser checks: Playwright against the deployed URL — chat round-trip,
    easter eggs (`surprise`, `freelance`), localStorage persistence on reload,
    zero console errors, 390px mobile viewport. Also check: the `prophecy`
@@ -27,7 +27,7 @@
   conversation history). `share` looks backwards through `entries` for the
   most recent `p === 1` entry and renders it to a PNG.
 - **Clear-mid-reply epoch guard**: a module-level `epoch` counter in
-  `index.html`, bumped by `clearLog()`. Every async reply path (chat, the
+  `public/index.html`, bumped by `clearLog()`. Every async reply path (chat, the
   AI-powered incantations, prophecy) captures `epoch` before it starts and
   checks it again wherever it would otherwise touch the DOM or append to
   `entries`; a mismatch means the slate was wiped mid-flight, so the path
@@ -62,5 +62,5 @@
   *before* echoing the new message, so the echo never ends up in its own
   history. Old localStorage logs predating this field just contribute no
   history — no migration needed.
-- `wrangler.toml` needs `pages_build_output_dir = "."` for Pages deploys; the
+- `wrangler.toml` needs `pages_build_output_dir = "public"` for Pages deploys (only public/ is published; never point it at the repo root, which leaked AGENTS.md, tests, and config); the
   AI binding lives under `[ai] binding = "AI"`.

@@ -10,7 +10,7 @@ Workers AI — **entirely on the free tier, no API keys needed**.
 ## How it works
 
 ```
-Browser (index.html — vanilla, zero build, static = unlimited/free)
+Browser (public/index.html — vanilla, zero build, static = unlimited/free)
    │  POST /api/chat  {message, history[]}
    ▼
 Pages Function (functions/api/chat.js — Workers Free quota)
@@ -39,7 +39,7 @@ Workers AI (@cf/google/gemma-4-26b-a4b-it, falls back to
 ## Local development
 
 ```bash
-npx wrangler pages dev .     # serves the site + functions locally
+npx wrangler pages dev      # serves the site + functions locally
 npm test                     # unit tests for functions/api/chat.js
 ```
 
@@ -47,7 +47,7 @@ npm test                     # unit tests for functions/api/chat.js
 
 ```bash
 npx wrangler login           # one-time browser auth
-npx wrangler pages deploy .  # creates/updates the pythia-oracle project
+npx wrangler pages deploy   # creates/updates the pythia-oracle project
 ```
 
 The AI binding comes from `wrangler.toml` (`[ai] binding = "AI"`).
@@ -71,7 +71,7 @@ the practical effect of the daily neuron cap.
 ## Project structure
 
 ```
-index.html                 the temple (frontend, single file)
+public/index.html          the temple (frontend, single file; only public/ is published)
 functions/api/chat.js      the mouthpiece (Pages Function)
 wrangler.toml              Pages config + AI binding
 ```
