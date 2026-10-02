@@ -39,15 +39,15 @@ Workers AI (@cf/google/gemma-4-26b-a4b-it, falls back to
 ## Local development
 
 ```bash
-npx wrangler pages dev      # serves the site + functions locally
-npm test                     # unit tests for functions/api/chat.js
+npm run dev                 # wrangler pages dev (pinned 4.146.0): site + functions
+npm test                    # unit + static guards; npm run check / build:functions
 ```
 
 ## Deploy
 
 ```bash
 npx wrangler login           # one-time browser auth
-npx wrangler pages deploy   # creates/updates the pythia-oracle project
+npm run deploy              # wrangler pages deploy (pinned), publishes public/ only
 ```
 
 The AI binding comes from `wrangler.toml` (`[ai] binding = "AI"`).
