@@ -186,6 +186,10 @@ export async function onRequestPost(context) {
   } catch {
     return json({ error: 'BAD_JSON' }, 400);
   }
+  // `null`, numbers, strings, and arrays parse as JSON but are not a request.
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return json({ error: 'BAD_JSON' }, 400);
+  }
 
   const modeName = typeof body.mode === 'string' ? body.mode : 'chat';
   if (!Object.hasOwn(MODES, modeName)) return json({ error: 'BAD_MODE' }, 400);

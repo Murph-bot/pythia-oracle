@@ -149,3 +149,14 @@ test('capacity error (3040) retries the same model once before falling back', as
   assert.deepEqual(await res.json(), { reply: 'Second wind.' });
   assert.deepEqual(calls.map((c) => c.model), [GEMMA, GEMMA]);
 });
+
+test('non-object JSON bodies (null, number, array) return 400 BAD_JSON without an AI call', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'unused' }));
+  for (const body of [null, 5, 'str', true, []]) {
+    const res = await onRequestPost({ request: makeRequest(body), env });
+    assert.equal(res.status, 400, JSON.stringify(body));
+    assert.deepEqual(await res.json(), { error: 'BAD_JSON' });
+  }
+  assert.equal(calls.length, 0);
+});
