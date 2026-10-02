@@ -99,8 +99,9 @@ export function cleanReply(text, truncated) {
   out = out.replace(/\*\*/g, '').replace(/__/g, '');
   out = out.replace(/^#+\s*/, '');
   out = out.replace(/^pythia:\s*/i, '').trim();
-  const quoted = out.match(/^["'“”‘’](.*)["'“”‘’]$/s);
-  if (quoted) out = quoted[1];
+  // Unwrap only when the whole reply is one quotation: no quote marks inside.
+  const quoted = out.match(/^["“](.*)["”]$/s) || out.match(/^['‘](.*)['’]$/s);
+  if (quoted && !/["“”]/.test(quoted[1])) out = quoted[1];
   if (truncated) {
     const cutoff = Math.floor(out.length * 0.4);
     for (let i = out.length - 1; i >= cutoff; i--) {

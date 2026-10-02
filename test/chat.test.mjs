@@ -229,3 +229,13 @@ test('optional KV global daily cap returns BUDGET once spent', async () => {
   assert.deepEqual(codes, [200, 200, 429]);
   assert.equal(calls.length, 2);
 });
+
+test('cleanReply keeps quotes when a reply holds two separate quotations', () => {
+  const two = '"Yes" is the word, said the oracle, "no"';
+  assert.equal(cleanReply(two, false), two);
+  assert.equal(cleanReply('“Whole reply quoted.”', false), 'Whole reply quoted.');
+});
+
+test('cleanReply cuts a truncated Greek reply at the Greek question mark (U+037E)', () => {
+  assert.equal(cleanReply('Τι θέλεις\u037E Πες μου', true), 'Τι θέλεις\u037E');
+});
