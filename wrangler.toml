@@ -5,10 +5,9 @@ pages_build_output_dir = "public"
 [ai]
 binding = "AI"
 
-# Optional global daily AI cap (functions/api/chat.js isOverGlobalCap).
-# Inactive until a KV namespace exists. To enable:
-#   npx wrangler kv namespace create PYTHIA_KV
-# then uncomment with the returned id. PYTHIA_DAILY_CAP overrides 700.
-# [[kv_namespaces]]
-# binding = "PYTHIA_KV"
-# id = "<namespace id>"
+# Global daily AI cap (functions/api/chat.js isOverGlobalCap): one actor
+# rotating IPs cannot spend the whole neuron budget. PYTHIA_DAILY_CAP
+# overrides the default 700; keep it under KV's free 1,000 writes/day.
+[[kv_namespaces]]
+binding = "PYTHIA_KV"
+id = "75b43c8e27ae4c55bb9eae9c03d319c0"

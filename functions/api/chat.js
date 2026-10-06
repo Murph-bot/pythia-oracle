@@ -9,6 +9,7 @@ const RATE_WINDOW = 600; // seconds
 const DAILY_PER_IP = 100; // AI replies per visitor per UTC day
 const MAX_HISTORY_CHARS = 4000; // total history sent to the model, newest first
 const DEFAULT_DAILY_CAP = 700; // global AI replies per UTC day (needs PYTHIA_KV)
+const MAX_REPLY = 2000; // longest assistant turn accepted back; it must arrive whole to verify
 
 // Gemma answers in an OpenAI-shaped response (res.choices[0].message.content)
 // and, without enable_thinking: false, burns its whole token budget on hidden
@@ -169,6 +170,38 @@ async function isOverGlobalCap(env) {
   }
 }
 
+// The browser sends the conversation back as history, so a visitor can write
+// fake "assistant" turns in which PYTHIA agreed to drop her rules. Every reply
+// is signed with PYTHIA_HISTORY_SECRET; assistant turns without a valid
+// signature are dropped. With no secret set, no assistant turn is trusted.
+const encoder = new TextEncoder();
+
+function historyKey(env) {
+  if (!env.PYTHIA_HISTORY_SECRET) return null;
+  return crypto.subtle.importKey(
+    'raw',
+    encoder.encode(env.PYTHIA_HISTORY_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify']
+  );
+}
+
+async function signReply(key, text) {
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(text)));
+  return btoa(String.fromCharCode(...mac));
+}
+
+async function isSigned(key, text, sig) {
+  if (!key || typeof sig !== 'string') return false;
+  try {
+    const mac = Uint8Array.from(atob(sig), (c) => c.charCodeAt(0));
+    return await crypto.subtle.verify('HMAC', key, mac, encoder.encode(text));
+  } catch {
+    return false;
+  }
+}
+
 // Keeps the newest turns whose combined length fits the budget.
 function trimHistory(turns) {
   const kept = [];
@@ -261,16 +294,15 @@ export async function onRequestPost(context) {
     message = mode.task; // the visitor's input is ignored; the incantation is the message
   }
 
+  const key = await historyKey(env);
   const history = Array.isArray(body.history) ? body.history.slice(-MAX_HISTORY) : [];
   const turns = [];
   for (const h of history) {
-    if (
-      h &&
-      (h.role === 'user' || h.role === 'assistant') &&
-      typeof h.content === 'string' &&
-      h.content.length > 0
-    ) {
-      turns.push({ role: h.role, content: h.content.slice(0, MAX_MESSAGE) });
+    if (!h || typeof h.content !== 'string' || h.content.length === 0) continue;
+    if (h.role === 'user') {
+      turns.push({ role: 'user', content: h.content.slice(0, MAX_MESSAGE) });
+    } else if (h.role === 'assistant' && h.content.length <= MAX_REPLY && (await isSigned(key, h.content, h.sig))) {
+      turns.push({ role: 'assistant', content: h.content.slice(0, MAX_MESSAGE) });
     }
   }
   const messages = [{ role: 'system', content: systemPrompt(athensToday()) }, ...trimHistory(turns)];
@@ -282,7 +314,7 @@ export async function onRequestPost(context) {
   try {
     const reply = await askOracle(env, messages, mode.maxTokens, mode.temperature);
     if (!reply) return json({ error: 'EMPTY_REPLY' }, 502);
-    return json({ reply });
+    return json(key ? { reply, sig: await signReply(key, reply) } : { reply });
   } catch (err) {
     const code = err && (err.code || err.status);
     if (code === 3036) return json({ error: 'BUDGET' }, 429); // daily free neurons spent

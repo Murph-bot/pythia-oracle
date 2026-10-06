@@ -15,11 +15,13 @@ const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/* Log entries: { k: 'html'|'text', c: class, s: content, r?: 'user'|'assistant', p?: 1 }
+/* Log entries: { k: 'html'|'text', c: class, s: content, r?: 'user'|'assistant', g?: sig, p?: 1 }
    — 'text' entries (user input, oracle replies) are rendered via textContent,
    never innerHTML. `r` marks a genuine conversation turn and is the only
    thing sent back to the server as history; commands, echoes of commands,
-   rate answers, and error/fallback lines carry no `r`. `p: 1` marks a
+   rate answers, and error/fallback lines carry no `r`. `g` is the server's
+   signature on an assistant reply; the server ignores assistant turns sent
+   back without it. `p: 1` marks a
    prophecy entry (for the `share` command) and never carries `r`. */
 const entries = [];
 
@@ -264,6 +266,7 @@ const HELP = [
   ['share', 'carry the prophecy beyond the temple'],
   ['voice', 'let the Oracle speak aloud (on/off)'],
   ['clear', 'wipe the slate (Cmd+K)'],
+  ['privacy', 'what the temple keeps (nothing)'],
 ];
 
 const SKILLS = [
@@ -422,6 +425,10 @@ function incantation(mode, lead, fallbackList, opts) {
 function cmdJudge() { incantation('judge', 'The Oracle weighs your karma...', JUDGMENTS, { speak: true }); }
 function cmdFortune() { incantation('fortune', 'The Oracle whispers:', FORTUNES); }
 function cmdCreate() { incantation('create', 'The void stirs...', IDEAS); }
+
+const PRIVACY = 'Privacy. This site does not store your conversations. Your chat is saved only in your own browser; type clear to erase it. Each message is sent to Cloudflare Workers AI to generate a reply and is not kept afterward or used to train AI models. Your IP address is used only to prevent abuse, and that record expires within 24 hours. No accounts, no cookies, no analytics.';
+
+function cmdPrivacy() { printText(PRIVACY, 'dim'); }
 
 function cmdName() {
   $prompt.textContent = 'keeper>';
@@ -653,19 +660,20 @@ function consult(mode, message, history) {
     .then(async (res) => {
       let data = null;
       try { data = await res.json(); } catch (e) { /* not json */ }
-      if (res.ok && data && typeof data.reply === 'string') return { reply: data.reply };
+      if (res.ok && data && typeof data.reply === 'string') return { reply: data.reply, sig: data.sig };
       return { error: (data && data.error) || 'AI' };
     })
     .catch(() => ({ error: 'NETWORK' }));
 }
 
 // Builds the history array the server expects from entries already marked
-// with a role: last 20 turns, each clipped to 600 chars.
+// with a role: last 20 turns. User turns are clipped to 600 chars; assistant
+// turns go back whole with their signature, or the server cannot verify them.
 function conversation() {
   const history = [];
   for (const e of entries) {
     if (e.r === 'user' && e.k === 'text') history.push({ role: 'user', content: e.s.slice(0, 600) });
-    else if (e.r === 'assistant' && e.k === 'text') history.push({ role: 'assistant', content: e.s.slice(0, 600) });
+    else if (e.r === 'assistant' && e.k === 'text') history.push({ role: 'assistant', content: e.s, sig: e.g });
   }
   return history.slice(-20);
 }
@@ -686,7 +694,7 @@ function askOracle(message, history) {
       const speed = Math.max(2, Math.min(12, 1800 / res.reply.length));
       typeLine(res.reply, 'oracle', speed, () => {
         if (epoch !== startEpoch) { thinking = false; return; }
-        addEntry('text', 'oracle', res.reply, 'assistant');
+        addEntry('text', 'oracle', res.reply, 'assistant', res.sig ? { g: res.sig } : undefined);
         announce(res.reply);
         if (voiceOn) speak(res.reply);
         thinking = false;
@@ -712,6 +720,7 @@ const COMMANDS = {
   share: cmdShare,
   voice: cmdVoice,
   clear: clearLog,
+  privacy: cmdPrivacy,
   sotirios: cmdName,
   pythia: cmdName,
 };
@@ -788,6 +797,11 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('a, input, button')) return;
   if (String(getSelection().toString())) return;
   $cmd.focus();
+});
+$('privacy-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  printText('privacy', 'echo');
+  cmdPrivacy();
 });
 window.addEventListener('resize', onResize);
 

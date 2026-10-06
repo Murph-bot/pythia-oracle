@@ -52,6 +52,12 @@
 - **Neuron budget**: 10,000/day free, resets UTC midnight. Exhaustion → error
   `3036` from `env.AI.run` → mapped to a graceful `429` in the function, and
   aborts the whole model chain (no point falling back — the budget is shared).
+- **Signed history**: `/api/chat` returns `{ reply, sig }` when
+  `PYTHIA_HISTORY_SECRET` is set. The client stores `sig` as `g` on the
+  assistant entry and sends it back as `history[].sig` with the full reply
+  text (not clipped, or the HMAC fails). The server drops unsigned or
+  mismatched assistant turns; with no secret, it drops all of them.
+- **Global cap is live**: `PYTHIA_KV` is bound in `wrangler.toml`.
 - **Rate limiting is edge-local** (Cache API, fixed windows: 20/10 min and 100/day per IP) — approximate, fail-open. Pages cannot use the Workers Rate Limiting binding; the global cap is the optional `PYTHIA_KV` counter. Fine
   for MVP; real global limits need Workers Rate Limiting API or Durable Objects.
 - **LLM output is untrusted**: always render via `textContent`; never innerHTML.

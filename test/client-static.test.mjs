@@ -36,3 +36,14 @@ test('client and server agree on message and history limits', () => {
   assert.equal(num(server, /MAX_MESSAGE = (\d+)/), num(js, /e\.s\.slice\(0, (\d+)\)/));
   assert.equal(num(server, /MAX_HISTORY = (\d+)/), num(js, /history\.slice\(-(\d+)\)/));
 });
+
+test('chat replies keep their signature and send it back as history', () => {
+  assert.match(js, /addEntry\('text', 'oracle', res\.reply, 'assistant', res\.sig \? \{ g: res\.sig \}/);
+  assert.match(js, /role: 'assistant', content: e\.s, sig: e\.g/);
+});
+
+test('the privacy notice is reachable from the footer and as an incantation', () => {
+  assert.match(html, /id="privacy-link"/);
+  assert.match(js, /privacy: cmdPrivacy/);
+  assert.match(js, /does not store your conversations/);
+});

@@ -35,6 +35,14 @@ Workers AI (@cf/google/gemma-4-26b-a4b-it, falls back to
   The server keeps nothing.
 - Security: no secrets exist in the client. The Workers AI binding is
   account-scoped. LLM replies are rendered as plain text (never HTML).
+- Signed history: every reply carries an HMAC signature
+  (`PYTHIA_HISTORY_SECRET`). The browser sends it back with the history, and
+  the server drops any assistant turn whose signature does not match, so a
+  visitor cannot forge earlier replies in which PYTHIA dropped her rules.
+- Privacy: type `privacy` or use the footer link. The site stores no
+  conversations; the chat lives in the visitor's browser and `clear` erases it.
+  The only server-side state is per-IP rate-limit counters (expire within 24h)
+  and one global daily reply count in KV.
 
 ## Local development
 
@@ -50,6 +58,17 @@ npx wrangler login           # one-time browser auth
 npm run deploy              # wrangler pages deploy (pinned), publishes public/ only
 ```
 
+One-time secret for signed history (set it before deploying this code, or
+PYTHIA forgets earlier replies in each conversation):
+
+```bash
+openssl rand -base64 32 | npx --yes wrangler@4.146.0 pages secret put PYTHIA_HISTORY_SECRET --project-name pythia-oracle
+```
+
+For `npm run dev`, put `PYTHIA_HISTORY_SECRET=<any string>` in `.dev.vars`
+(gitignored).
+```
+
 The AI binding comes from `wrangler.toml` (`[ai] binding = "AI"`).
 
 ## Free-tier budget (roughly)
@@ -61,8 +80,9 @@ The AI binding comes from `wrangler.toml` (`[ai] binding = "AI"`).
   100k/day Workers free quota — far beyond MVP needs.
 - **Rate limit**: 20 messages / 10 minutes per visitor (Cache API, edge-local).
 - **Daily caps**: 100 AI replies per visitor per UTC day (Cache API, edge-local),
-  plus an optional global ceiling (default 700/day, `PYTHIA_DAILY_CAP`) once a
-  `PYTHIA_KV` namespace is bound (see `wrangler.toml`).
+  plus a global ceiling of 700 replies/day (`PYTHIA_DAILY_CAP`) counted in the
+  `PYTHIA_KV` namespace bound in `wrangler.toml`. Keep the cap under KV's free
+  1,000 writes/day.
 - **History budget**: at most 4,000 chars of prior turns reach the model.
 - **Origin**: cross-site browser POSTs to `/api/chat` get `403 BAD_ORIGIN`.
 
