@@ -47,7 +47,7 @@ Workers AI (@cf/google/gemma-4-26b-a4b-it, falls back to
 ## Local development
 
 ```bash
-npm run dev                 # wrangler pages dev (pinned 4.146.0): site + functions
+npm run dev                 # wrangler pages dev (pinned 4.148.0): site + functions
 npm test                    # unit + static guards; npm run check / build:functions
 ```
 
@@ -62,7 +62,7 @@ One-time secret for signed history (set it before deploying this code, or
 PYTHIA forgets earlier replies in each conversation):
 
 ```bash
-openssl rand -base64 32 | npx --yes wrangler@4.146.0 pages secret put PYTHIA_HISTORY_SECRET --project-name pythia-oracle
+openssl rand -base64 32 | npx --yes wrangler@4.148.0 pages secret put PYTHIA_HISTORY_SECRET --project-name pythia-oracle
 ```
 
 For `npm run dev`, put `PYTHIA_HISTORY_SECRET=<any string>` in `.dev.vars`

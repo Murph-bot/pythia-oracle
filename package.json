@@ -4,8 +4,8 @@
   "scripts": {
     "test": "node --test",
     "check": "node --check functions/api/chat.js && node --check public/app.js",
-    "build:functions": "npx --yes wrangler@4.146.0 pages functions build --outdir .wrangler/functions-build",
-    "dev": "npx --yes wrangler@4.146.0 pages dev",
-    "deploy": "npx --yes wrangler@4.146.0 pages deploy"
+    "build:functions": "npx --yes wrangler@4.148.0 pages functions build --outdir .wrangler/functions-build",
+    "dev": "npx --yes wrangler@4.148.0 pages dev",
+    "deploy": "npx --yes wrangler@4.148.0 pages deploy"
   }
 }
