@@ -85,6 +85,8 @@ The AI binding comes from `wrangler.toml` (`[ai] binding = "AI"`).
   1,000 writes/day.
 - **History budget**: at most 4,000 chars of prior turns reach the model.
 - **Origin**: cross-site browser POSTs to `/api/chat` get `403 BAD_ORIGIN`.
+- **Body size**: requests over 128 KB get `413 TOO_LARGE`, cut off while
+  streaming so an oversized upload is never read whole.
 
 ### Model chain
 

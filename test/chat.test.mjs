@@ -24,12 +24,12 @@ function makeEnv(impl) {
 }
 
 function makeRequest(body, extraHeaders = {}) {
-  const headers = { 'cf-connecting-ip': '203.0.113.9', ...extraHeaders };
-  return {
-    url: 'https://pythia-oracle.pages.dev/api/chat',
-    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
-    json: async () => body,
-  };
+  return new Request('https://pythia-oracle.pages.dev/api/chat', {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '203.0.113.9', ...extraHeaders },
+    body: typeof body === 'string' || body instanceof ReadableStream ? body : JSON.stringify(body),
+    duplex: 'half',
+  });
 }
 
 // A working Cache API stand-in so counters actually count.
@@ -298,4 +298,48 @@ test('a long signed reply verifies whole, then is clipped to 600 chars for the m
   const long = await signedTurn(env, 'a'.repeat(1200) + '.');
   await onRequestPost({ request: makeRequest({ message: 'hi', history: [long] }), env });
   assert.deepEqual(calls[0].opts.messages[1], { role: 'assistant', content: 'a'.repeat(600) });
+});
+
+test('a body over 128 KB is refused with 413 TOO_LARGE before any AI call', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'ok' }));
+  const res = await onRequestPost({ request: makeRequest({ message: 'hi', pad: 'x'.repeat(140000) }), env });
+  assert.equal(res.status, 413);
+  assert.deepEqual(await res.json(), { error: 'TOO_LARGE' });
+  assert.equal(calls.length, 0);
+});
+
+test('a streamed body with no Content-Length is cut off once it passes the cap', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'ok' }));
+  let pulled = 0;
+  const endless = new ReadableStream({
+    pull(controller) {
+      pulled++;
+      controller.enqueue(new TextEncoder().encode('x'.repeat(16384)));
+    },
+  });
+  const res = await onRequestPost({ request: makeRequest(endless), env });
+  assert.equal(res.status, 413);
+  assert.ok(pulled < 20, `read ${pulled} chunks of an endless body`);
+  assert.equal(calls.length, 0);
+});
+
+test('a full-size Greek conversation still fits under the cap', async () => {
+  stubCaches();
+  const { env } = makeEnv(async () => ({ response: 'ok' }));
+  env.PYTHIA_HISTORY_SECRET = 'test-secret';
+  const reply = await signedTurn(env, 'Ω'.repeat(1999) + '.');
+  const history = Array.from({ length: 20 }, (_, i) => (i % 2 ? reply : { role: 'user', content: 'λ'.repeat(600) }));
+  const res = await onRequestPost({ request: makeRequest({ message: 'λ'.repeat(600), history }), env });
+  assert.equal(res.status, 200);
+});
+
+test('malformed JSON text returns 400 BAD_JSON', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async () => ({ response: 'ok' }));
+  const res = await onRequestPost({ request: makeRequest('{"message": '), env });
+  assert.equal(res.status, 400);
+  assert.deepEqual(await res.json(), { error: 'BAD_JSON' });
+  assert.equal(calls.length, 0);
 });

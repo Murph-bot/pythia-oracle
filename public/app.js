@@ -633,7 +633,7 @@ function clearLog() {
 /* ---------- conversation with the Oracle ---------- */
 let thinking = false;
 
-// One line per server error code, in character. TOO_LONG/EMPTY/BAD_JSON/BAD_MODE
+// One line per server error code, in character. TOO_LONG/TOO_LARGE/EMPTY/BAD_JSON/BAD_MODE
 // can't happen from this UI (the input is already capped and validated, and
 // modes are hardcoded), so they fall through to the same default as an
 // unrecognized code.

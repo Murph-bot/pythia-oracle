@@ -10,6 +10,7 @@ const DAILY_PER_IP = 100; // AI replies per visitor per UTC day
 const MAX_HISTORY_CHARS = 4000; // total history sent to the model, newest first
 const DEFAULT_DAILY_CAP = 700; // global AI replies per UTC day (needs PYTHIA_KV)
 const MAX_REPLY = 2000; // longest assistant turn accepted back; it must arrive whole to verify
+const MAX_BODY = 131072; // bytes; a full 20-turn history of long Greek replies is about 80 KB
 
 // Gemma answers in an OpenAI-shaped response (res.choices[0].message.content)
 // and, without enable_thinking: false, burns its whole token budget on hidden
@@ -113,6 +114,27 @@ export function cleanReply(text, truncated) {
     }
   }
   return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Reads the body as text, refusing it (null) once it passes MAX_BODY bytes, so
+// an oversized or endless upload is never buffered whole.
+async function readBody(request) {
+  if (Number(request.headers.get('content-length')) > MAX_BODY) return null;
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    size += value.byteLength;
+    if (size > MAX_BODY) {
+      await reader.cancel();
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
 }
 
 const json = (body, status = 200) =>
@@ -270,9 +292,12 @@ export async function onRequestPost(context) {
     return json({ error: 'RATE_LIMIT' }, 429);
   }
 
+  const raw = await readBody(request);
+  if (raw === null) return json({ error: 'TOO_LARGE' }, 413);
+
   let body;
   try {
-    body = await request.json();
+    body = JSON.parse(raw);
   } catch {
     return json({ error: 'BAD_JSON' }, 400);
   }
