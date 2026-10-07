@@ -53,10 +53,7 @@
   `3036` from `env.AI.run` → mapped to a graceful `429` in the function, and
   aborts the whole model chain (no point falling back — the budget is shared).
 - **Signed history**: `/api/chat` returns `{ reply, sig }` when
-  `PYTHIA_HISTORY_SECRET` is set. The client stores `sig` as `g` on the
-  assistant entry and sends it back as `history[].sig` with the full reply
-  text (not clipped, or the HMAC fails). The server drops unsigned or
-  mismatched assistant turns; with no secret, it drops all of them.
+  `PYTHIA_HISTORY_SECRET` is set and the request carries a valid `cid` (32 lowercase hex chars). Each sig is a chain link: HMAC over `[cid, prev, mode, question, reply]`, where `prev` is the previous link's sig. The client keeps `cid` in localStorage (`pythia-v2-conversation`, reset by `clear`), stores `sig` as `g`, and sends `history`, `cid`, and `anchor` (the sig just before the 20-turn window). The server walks the chain from `anchor` and stops at the first broken link. Unpaired user turns are kept as sent. Visitors with entries from before this change lose their old replies from the model's view once. Their questions still reach the model.
 - **Global cap is live**: `PYTHIA_KV` is bound in `wrangler.toml`.
 - **Rate limiting is edge-local** (Cache API, fixed windows: 20/10 min and 100/day per IP) — approximate, fail-open. Pages cannot use the Workers Rate Limiting binding; the global cap is the optional `PYTHIA_KV` counter. Fine
   for MVP; real global limits need Workers Rate Limiting API or Durable Objects.

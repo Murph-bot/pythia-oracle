@@ -193,10 +193,14 @@ async function isOverGlobalCap(env) {
 }
 
 // The browser sends the conversation back as history, so a visitor can write
-// fake "assistant" turns in which PYTHIA agreed to drop her rules. Every reply
-// is signed with PYTHIA_HISTORY_SECRET; assistant turns without a valid
-// signature are dropped. With no secret set, no assistant turn is trusted.
+// fake "assistant" turns in which PYTHIA agreed to drop her rules. Each reply
+// is signed with PYTHIA_HISTORY_SECRET as one link in a chain. A link covers the
+// conversation id, the signature of the link before it, the mode, the user
+// message it answers, and the reply. So a link verifies only in its own
+// conversation, in its own position, after the exact message it answered.
+// With no secret set, no assistant turn is trusted.
 const encoder = new TextEncoder();
+const CONVERSATION_ID = /^[0-9a-f]{32}$/;
 
 function historyKey(env) {
   if (!env.PYTHIA_HISTORY_SECRET) return null;
@@ -209,7 +213,7 @@ function historyKey(env) {
   );
 }
 
-async function signReply(key, text) {
+async function signText(key, text) {
   const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(text)));
   return btoa(String.fromCharCode(...mac));
 }
@@ -222,6 +226,31 @@ async function isSigned(key, text, sig) {
   } catch {
     return false;
   }
+}
+
+const linkPayload = (cid, prev, mode, question, reply) => JSON.stringify([cid, prev, mode, question, reply]);
+
+// Walks the history from the anchor, the signature of the link just before the
+// window. Keeps user turns as sent, and each assistant turn whose link verifies.
+// The first failing link ends the walk, because every later link depends on it.
+async function trustedHistory(key, cid, anchor, history) {
+  const turns = [];
+  let prev = anchor;
+  let question = null;
+  for (const h of history) {
+    if (!h || typeof h.content !== 'string' || h.content.length === 0) continue;
+    if (h.role === 'user') {
+      turns.push({ role: 'user', content: h.content.slice(0, MAX_MESSAGE) });
+      question = h.content;
+    } else if (h.role === 'assistant') {
+      const payload = question === null || !cid ? null : linkPayload(cid, prev, 'chat', question, h.content);
+      if (!payload || h.content.length > MAX_REPLY || !(await isSigned(key, payload, h.sig))) break;
+      turns.push({ role: 'assistant', content: h.content.slice(0, MAX_MESSAGE) });
+      prev = h.sig;
+      question = null;
+    }
+  }
+  return { turns, prev };
 }
 
 // Keeps the newest turns whose combined length fits the budget.
@@ -320,16 +349,10 @@ export async function onRequestPost(context) {
   }
 
   const key = await historyKey(env);
+  const cid = typeof body.cid === 'string' && CONVERSATION_ID.test(body.cid) ? body.cid : null;
+  const anchor = typeof body.anchor === 'string' ? body.anchor : '';
   const history = Array.isArray(body.history) ? body.history.slice(-MAX_HISTORY) : [];
-  const turns = [];
-  for (const h of history) {
-    if (!h || typeof h.content !== 'string' || h.content.length === 0) continue;
-    if (h.role === 'user') {
-      turns.push({ role: 'user', content: h.content.slice(0, MAX_MESSAGE) });
-    } else if (h.role === 'assistant' && h.content.length <= MAX_REPLY && (await isSigned(key, h.content, h.sig))) {
-      turns.push({ role: 'assistant', content: h.content.slice(0, MAX_MESSAGE) });
-    }
-  }
+  const { turns, prev } = await trustedHistory(key, cid, anchor, history);
   const messages = [{ role: 'system', content: systemPrompt(athensToday()) }, ...trimHistory(turns)];
   messages.push({ role: 'user', content: message });
 
@@ -339,7 +362,8 @@ export async function onRequestPost(context) {
   try {
     const reply = await askOracle(env, messages, mode.maxTokens, mode.temperature);
     if (!reply) return json({ error: 'EMPTY_REPLY' }, 502);
-    return json(key ? { reply, sig: await signReply(key, reply) } : { reply });
+    if (!key || !cid) return json({ reply });
+    return json({ reply, sig: await signText(key, linkPayload(cid, prev, modeName, message, reply)) });
   } catch (err) {
     const code = err && (err.code || err.status);
     if (code === 3036) return json({ error: 'BUDGET' }, 429); // daily free neurons spent

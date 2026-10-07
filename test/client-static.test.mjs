@@ -34,7 +34,7 @@ test('client and server agree on message and history limits', () => {
   const num = (src, re) => Number(src.match(re)?.[1]);
   assert.equal(num(server, /MAX_MESSAGE = (\d+)/), Number(html.match(/maxlength="(\d+)"/)?.[1]));
   assert.equal(num(server, /MAX_MESSAGE = (\d+)/), num(js, /e\.s\.slice\(0, (\d+)\)/));
-  assert.equal(num(server, /MAX_HISTORY = (\d+)/), num(js, /history\.slice\(-(\d+)\)/));
+  assert.equal(num(server, /MAX_HISTORY = (\d+)/), num(js, /turns\.length - (\d+)\)/));
 });
 
 test('chat replies keep their signature and send it back as history', () => {

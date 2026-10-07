@@ -100,6 +100,32 @@ function speak(text) {
 /* ---------- memory (the marble remembers) ---------- */
 const MEMORY_KEY = 'pythia-v2-log';
 
+// Identifies this conversation to the server, which chains each reply to it, so
+// a reply signed in one conversation cannot be replayed into another. Reset
+// together with the log.
+const CONVERSATION_KEY = 'pythia-v2-conversation';
+
+function newConversationId() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function loadConversationId() {
+  try {
+    const saved = localStorage.getItem(CONVERSATION_KEY);
+    if (saved && /^[0-9a-f]{32}$/.test(saved)) return saved;
+    const fresh = newConversationId();
+    localStorage.setItem(CONVERSATION_KEY, fresh);
+    return fresh;
+  } catch (e) { return newConversationId(); }
+}
+
+let conversationId = loadConversationId();
+
+function resetConversationId() {
+  conversationId = newConversationId();
+  try { localStorage.setItem(CONVERSATION_KEY, conversationId); } catch (e) { /* private mode */ }
+}
+
 function persist() {
   try { localStorage.setItem(MEMORY_KEY, JSON.stringify(entries)); } catch (e) { /* private mode */ }
 }
@@ -628,6 +654,7 @@ function clearLog() {
   $log.innerHTML = '';
   entries.length = 0;
   persist();
+  resetConversationId();
 }
 
 /* ---------- conversation with the Oracle ---------- */
@@ -651,11 +678,11 @@ const ERROR_LINES = {
 // The one fetch primitive: every conversational path (chat and the AI-powered
 // incantations) goes through this. Resolves to { reply } or { error }, never
 // rejects, so callers never need a .catch.
-function consult(mode, message, history) {
+function consult(mode, message, conv) {
   return fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, message, history }),
+    body: JSON.stringify({ mode, message, history: conv.history, anchor: conv.anchor, cid: conv.cid }),
   })
     .then(async (res) => {
       let data = null;
@@ -666,19 +693,25 @@ function consult(mode, message, history) {
     .catch(() => ({ error: 'NETWORK' }));
 }
 
-// Builds the history array the server expects from entries already marked
-// with a role: last 20 turns. User turns are clipped to 600 chars; assistant
+// Builds what the server needs to verify the history: the last 20 turns, the
+// conversation id, and an anchor. User turns are clipped to 600 chars; assistant
 // turns go back whole with their signature, or the server cannot verify them.
+// The anchor is the signature of the last assistant turn before the window, so
+// the server can walk the chain from inside it. The window starts on a user turn.
 function conversation() {
-  const history = [];
+  const turns = [];
   for (const e of entries) {
-    if (e.r === 'user' && e.k === 'text') history.push({ role: 'user', content: e.s.slice(0, 600) });
-    else if (e.r === 'assistant' && e.k === 'text') history.push({ role: 'assistant', content: e.s, sig: e.g });
+    if (e.r === 'user' && e.k === 'text') turns.push({ role: 'user', content: e.s.slice(0, 600) });
+    else if (e.r === 'assistant' && e.k === 'text') turns.push({ role: 'assistant', content: e.s, sig: e.g });
   }
-  return history.slice(-20);
+  let start = Math.max(0, turns.length - 20);
+  if (turns[start] && turns[start].role === 'assistant') start++;
+  const before = turns.slice(0, start).filter((t) => t.role === 'assistant');
+  const anchor = before.length ? before[before.length - 1].sig || '' : '';
+  return { history: turns.slice(start), anchor, cid: conversationId };
 }
 
-function askOracle(message, history) {
+function askOracle(message, conv) {
   thinking = true;
   const startEpoch = epoch;
   const d = document.createElement('div');
@@ -687,7 +720,7 @@ function askOracle(message, history) {
   $log.appendChild(d);
   scroll();
 
-  consult('chat', message, history).then((res) => {
+  consult('chat', message, conv).then((res) => {
     d.remove();
     if (epoch !== startEpoch) { thinking = false; return; }
     if (res.reply) {
@@ -734,10 +767,10 @@ function route(raw) {
   if (COMMANDS[t]) { printText(raw.trim(), 'echo'); COMMANDS[t](); return; }
   // Build history from entries already marked with a role BEFORE echoing this
   // new message, so the echo doesn't end up duplicated into its own history.
-  const history = conversation();
+  const conv = conversation();
   const message = raw.trim().slice(0, 600);
   printText(message, 'echo', 'user');
-  askOracle(message, history);
+  askOracle(message, conv);
 }
 
 function submit(raw) {

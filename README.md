@@ -36,9 +36,11 @@ Workers AI (@cf/google/gemma-4-26b-a4b-it, falls back to
 - Security: no secrets exist in the client. The Workers AI binding is
   account-scoped. LLM replies are rendered as plain text (never HTML).
 - Signed history: every reply carries an HMAC signature
-  (`PYTHIA_HISTORY_SECRET`). The browser sends it back with the history, and
-  the server drops any assistant turn whose signature does not match, so a
-  visitor cannot forge earlier replies in which PYTHIA dropped her rules.
+  (`PYTHIA_HISTORY_SECRET`) chained to its conversation and to the reply
+  before it. The browser sends the chain back with the history. The server
+  stops at the first reply whose link does not match, so a visitor cannot
+  forge earlier replies in which PYTHIA dropped her rules, move a reply to
+  another conversation, or pair it with a different question.
 - Privacy: type `privacy` or use the footer link. The site stores no
   conversations; the chat lives in the visitor's browser and `clear` erases it.
   The only server-side state is per-IP rate-limit counters (expire within 24h)
