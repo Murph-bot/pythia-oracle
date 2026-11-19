@@ -24,6 +24,7 @@ const GREEK_RE = /[\u0370-\u03ff\u1f00-\u1fff]/;
 const MODELS = {
   [PRIMARY_MODEL]: { chat_template_kwargs: { enable_thinking: false } },
   [FALLBACK_MODEL]: {},
+  [GREEK_MODEL]: { chat_template_kwargs: { thinking: false } },
 };
 
 export const systemPrompt = (today) => `You are PYTHIA, the Oracle of Delphi, reborn as a website. Today is ${today}.

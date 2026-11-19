@@ -491,3 +491,10 @@ test('if DeepSeek fails on a Greek question, Gemma still answers', async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(calls.map((c) => c.model), [DEEPSEEK, GEMMA]);
 });
+
+test('DeepSeek is asked not to think, so its budget goes to the reply', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(okReply);
+  await onRequestPost({ request: makeRequest({ message: 'Γεια σου' }), env });
+  assert.equal(calls[0].opts.chat_template_kwargs.thinking, false);
+});
