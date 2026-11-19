@@ -17,6 +17,10 @@ const MAX_BODY = 131072; // bytes; a full 20-turn history of long Greek replies 
 // reasoning and returns content: null. Llama answers via res.response instead.
 const PRIMARY_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const FALLBACK_MODEL = '@cf/meta/llama-3.2-3b-instruct';
+// Gemma's Greek invents words and fake maxims; DeepSeek writes natural Greek
+// at about 3x the neurons, so only Greek conversations go to it.
+const GREEK_MODEL = '@cf/deepseek-ai/deepseek-v4.1-flash-1017';
+const GREEK_RE = /[\u0370-\u03ff\u1f00-\u1fff]/;
 const MODELS = {
   [PRIMARY_MODEL]: { chat_template_kwargs: { enable_thinking: false } },
   [FALLBACK_MODEL]: {},
@@ -290,8 +294,9 @@ async function runModel(env, model, messages, maxTokens, temperature) {
 // free neurons are gone for every model), so it aborts the whole chain instead
 // of falling through. A capacity error is model-local and transient, so it
 // gets one retry on the same model before moving on.
-async function askOracle(env, messages, maxTokens, temperature) {
-  const chain = [...new Set([env.PYTHIA_MODEL, PRIMARY_MODEL, FALLBACK_MODEL].filter(Boolean))];
+async function askOracle(env, messages, maxTokens, temperature, greek) {
+  const first = greek ? GREEK_MODEL : env.PYTHIA_MODEL;
+  const chain = [...new Set([first, PRIMARY_MODEL, FALLBACK_MODEL].filter(Boolean))];
   let lastError = { code: 'EMPTY_REPLY' };
   for (const model of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -360,7 +365,8 @@ export async function onRequestPost(context) {
   if (await isOverGlobalCap(env)) return json({ error: 'BUDGET' }, 429);
 
   try {
-    const reply = await askOracle(env, messages, mode.maxTokens, mode.temperature);
+    const lastUser = modeName === 'chat' ? message : turns.findLast((t) => t.role === 'user')?.content ?? '';
+    const reply = await askOracle(env, messages, mode.maxTokens, mode.temperature, GREEK_RE.test(lastUser));
     if (!reply) return json({ error: 'EMPTY_REPLY' }, 502);
     if (!key || !cid) return json({ reply });
     return json({ reply, sig: await signText(key, linkPayload(cid, prev, modeName, message, reply)) });

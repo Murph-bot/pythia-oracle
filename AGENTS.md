@@ -44,6 +44,11 @@
 - **Free-plan model access**: some models 403 on the free plan (error 5035).
   The chain tries `@cf/google/gemma-4-26b-a4b-it` first, then falls back to
   `@cf/meta/llama-3.2-3b-instruct`. Override with `PYTHIA_MODEL`.
+- **Greek goes to DeepSeek**: when the visitor's latest message (for an
+  incantation, their last chat message) contains Greek letters, the chain starts
+  with `@cf/deepseek-ai/deepseek-v4.1-flash-1017`. Gemma's Greek made up words and
+  maxims. DeepSeek costs about 28 neurons a reply against Gemma's ~10, so English
+  stays on Gemma. `PYTHIA_MODEL` overrides English only.
 - **Gemma needs `enable_thinking: false`**: without that `chat_template_kwargs`
   flag, Gemma spends its whole token budget on hidden reasoning and returns
   `content: null`. It also answers in an OpenAI-shaped response

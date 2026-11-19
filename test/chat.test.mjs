@@ -454,3 +454,40 @@ test('malformed JSON text returns 400 BAD_JSON', async () => {
   assert.deepEqual(await res.json(), { error: 'BAD_JSON' });
   assert.equal(calls.length, 0);
 });
+
+const DEEPSEEK = '@cf/deepseek-ai/deepseek-v4.1-flash-1017';
+const okReply = async () => ({ choices: [{ message: { content: 'Γεια.' }, finish_reason: 'stop' }] });
+
+test('a Greek question goes to DeepSeek first, which writes correct Greek', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(okReply);
+  const res = await onRequestPost({ request: makeRequest({ message: 'Τι να φάω απόψε;' }), env });
+  assert.equal(res.status, 200);
+  assert.equal(calls[0].model, DEEPSEEK);
+});
+
+test('an English question stays on Gemma', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(okReply);
+  await onRequestPost({ request: makeRequest({ message: 'what should I eat tonight?' }), env });
+  assert.equal(calls[0].model, GEMMA);
+});
+
+test('an incantation follows the language of the last thing the visitor wrote', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(okReply);
+  const history = [{ role: 'user', content: 'Θέλω να αλλάξω δουλειά' }];
+  await onRequestPost({ request: makeRequest({ mode: 'prophecy', history }), env });
+  assert.equal(calls[0].model, DEEPSEEK);
+});
+
+test('if DeepSeek fails on a Greek question, Gemma still answers', async () => {
+  stubCaches();
+  const { env, calls } = makeEnv(async (model) => {
+    if (model === DEEPSEEK) throw Object.assign(new Error('no access'), { code: 5035 });
+    return { choices: [{ message: { content: 'Γεια.' }, finish_reason: 'stop' }] };
+  });
+  const res = await onRequestPost({ request: makeRequest({ message: 'Γεια σου' }), env });
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls.map((c) => c.model), [DEEPSEEK, GEMMA]);
+});
