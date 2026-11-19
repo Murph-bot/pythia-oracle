@@ -49,6 +49,10 @@
   with `@cf/deepseek-ai/deepseek-v4.1-flash-1017`. Gemma's Greek made up words and
   maxims. DeepSeek costs about 28 neurons a reply against Gemma's ~10, so English
   stays on Gemma. `PYTHIA_MODEL` overrides English only.
+- **Greek voice**: the system prompt's WHEN YOU SPEAK GREEK section asks for one
+  cryptic ancient-Greek line (polytonic) around clear modern-Greek advice
+  (monotonic). The Greek example in EXAMPLES OF YOUR VOICE is what keeps the
+  modern part monotonic; without it the model drifted into polytonic throughout.
 - **Gemma needs `enable_thinking: false`**: without that `chat_template_kwargs`
   flag, Gemma spends its whole token budget on hidden reasoning and returns
   `content: null`. It also answers in an OpenAI-shaped response
